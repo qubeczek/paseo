@@ -466,7 +466,7 @@ function parseRunLabels(labelFlags: string[] | undefined): Record<string, string
   });
 }
 
-function parseRunEnv(envFlags: string[] | undefined): Record<string, string> {
+export function parseRunEnv(envFlags: string[] | undefined): Record<string, string> {
   return parseKeyValueFlags(envFlags, {
     flagName: "--env",
     code: "INVALID_ENV",

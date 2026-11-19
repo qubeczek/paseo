@@ -2,7 +2,7 @@ import type { Command } from "commander";
 import { connectToDaemon } from "../../utils/client.js";
 import { collectMultiple } from "../../utils/command-options.js";
 import type { CommandError, CommandOptions, SingleResult } from "../../output/index.js";
-import { agentRunSchema, type AgentRunResult } from "./run.js";
+import { agentRunSchema, parseRunEnv, type AgentRunResult } from "./run.js";
 import type { AgentSnapshotPayload } from "@getpaseo/protocol/messages";
 
 export function addImportOptions(cmd: Command): Command {
@@ -16,6 +16,12 @@ export function addImportOptions(cmd: Command): Command {
       "Add label(s) to the agent (can be used multiple times)",
       collectMultiple,
       [],
+    )
+    .option(
+      "--env <key=value>",
+      "Set environment variable(s) for the agent process (can be used multiple times)",
+      collectMultiple,
+      [],
     );
 }
 
@@ -23,6 +29,7 @@ export interface AgentImportOptions extends CommandOptions {
   provider?: string;
   cwd?: string;
   label?: string[];
+  env?: string[];
   host?: string;
 }
 
@@ -112,6 +119,7 @@ export async function runImportCommand(
   const cwd = resolveImportCwd(options.cwd, process.cwd());
 
   const labels = parseImportLabels(options.label);
+  const env = parseRunEnv(options.env);
   const client = await connectToDaemon({ target: options.daemonTarget });
 
   try {
@@ -120,6 +128,7 @@ export async function runImportCommand(
       sessionId,
       cwd,
       ...(Object.keys(labels).length > 0 ? { labels } : {}),
+      ...(Object.keys(env).length > 0 ? { env } : {}),
     });
 
     await client.close();

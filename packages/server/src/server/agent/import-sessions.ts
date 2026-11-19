@@ -48,6 +48,7 @@ export interface NormalizedImportAgentRequest {
   cwd?: string;
   workspaceId?: string;
   labels?: Record<string, string>;
+  env?: Record<string, string>;
   requestId: string;
 }
 
@@ -112,6 +113,7 @@ export function normalizeImportAgentRequest(
     cwd: msg.cwd,
     workspaceId: msg.workspaceId,
     labels: msg.labels,
+    env: msg.env,
     requestId: msg.requestId,
   };
 }
@@ -204,7 +206,7 @@ async function importProviderSessionNow(
   cwd: string,
   workspaceId: string,
 ): Promise<ImportedProviderSession> {
-  const { provider, providerHandleId, labels } = input.request;
+  const { provider, providerHandleId, labels, env } = input.request;
 
   const matchingRecords = await input.agentStorage.listByProviderSession(
     provider,
@@ -253,6 +255,7 @@ async function importProviderSessionNow(
     cwd,
     workspaceId,
     labels,
+    env,
   });
   await unarchiveAgentState(input.agentStorage, input.agentManager, snapshot.id);
 

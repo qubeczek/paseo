@@ -1781,6 +1781,7 @@ export class AgentManager {
     cwd: string;
     workspaceId: string;
     labels?: Record<string, string>;
+    env?: Record<string, string>;
   }): Promise<ManagedAgent> {
     return this.trackAgentRegistrationOperation(this.importProviderSessionInternal(input));
   }
@@ -1791,6 +1792,7 @@ export class AgentManager {
     cwd: string;
     workspaceId: string;
     labels?: Record<string, string>;
+    env?: Record<string, string>;
   }): Promise<ManagedAgent> {
     this.assertAcceptingAgentRegistrations();
     const resolvedAgentId = validateAgentId(this.idFactory(), "importProviderSession");
@@ -1815,7 +1817,7 @@ export class AgentManager {
       client,
       storedConfig.cwd,
       paseoToolPolicy,
-      undefined,
+      input.env,
       {
         reason: "import",
         purpose: "interactive",
@@ -1857,6 +1859,7 @@ export class AgentManager {
         historyPrimed: true,
         initialTitle,
         publishWhenReady: true,
+        ...(input.env ? { launchEnv: { ...input.env } } : {}),
       });
       for (const event of imported.providerSubagentEvents ?? []) {
         const update = this.providerSubagents.apply(agent.id, event.provider, event.event);

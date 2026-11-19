@@ -2003,6 +2003,8 @@ export const ImportAgentRequestMessageSchema = z.object({
   cwd: z.string().optional(),
   workspaceId: z.string().optional(),
   labels: z.record(z.string(), z.string()).optional(),
+  /** Agent env for the imported session, as `create_agent_request` takes it. */
+  env: z.record(z.string(), z.string()).optional(),
   requestId: z.string(),
 });
 
