@@ -2309,6 +2309,14 @@ class ClaudeContextUsageState {
   }
 }
 
+/**
+ * Agent env (`paseo run --env KEY=value`) read by the Claude provider: the Claude session name
+ * (`claude --name`, the name in ~/.claude/sessions) and the Remote Control session name. Both
+ * are also passed to the Claude process like any other agent env.
+ */
+const CLAUDE_SESSION_NAME_ENV = "PASEO_CLAUDE_SESSION_NAME";
+const CLAUDE_REMOTE_CONTROL_NAME_ENV = "PASEO_CLAUDE_REMOTE_CONTROL_NAME";
+
 class ClaudeAgentSession implements AgentSession {
   readonly provider = "claude" as const;
   readonly capabilities = CLAUDE_CAPABILITIES;
@@ -3781,10 +3789,10 @@ class ClaudeAgentSession implements AgentSession {
       ) => Promise<{ session_url?: unknown } | undefined>;
     };
     if (typeof control.enableRemoteControl !== "function") return;
-    const name = `paseo: ${this.config.title?.trim() || path.basename(this.config.cwd)}`.slice(
-      0,
-      80,
-    );
+    const name = (
+      this.launchEnv?.[CLAUDE_REMOTE_CONTROL_NAME_ENV]?.trim() ||
+      `paseo: ${this.config.title?.trim() || path.basename(this.config.cwd)}`
+    ).slice(0, 80);
     void this.registerRemoteControl({
       query,
       enable: control.enableRemoteControl.bind(control),
@@ -3991,6 +3999,8 @@ class ClaudeAgentSession implements AgentSession {
       env: sdkEnv,
     };
 
+    this.applyClaudeSessionName(base);
+
     if (this.config.mcpServers) {
       base.mcpServers = this.normalizeMcpServers(this.config.mcpServers);
     }
@@ -4009,6 +4019,14 @@ class ClaudeAgentSession implements AgentSession {
       ];
     }
     return base;
+  }
+
+  /** `claude --name` from the agent env, unless the provider options already pass one. */
+  private applyClaudeSessionName(options: ClaudeOptions): void {
+    const sessionName = this.launchEnv?.[CLAUDE_SESSION_NAME_ENV]?.trim();
+    if (sessionName && options.extraArgs?.name === undefined) {
+      options.extraArgs = { ...options.extraArgs, name: sessionName };
+    }
   }
 
   private async buildSettingsOptions(
