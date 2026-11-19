@@ -3780,7 +3780,8 @@ class ClaudeAgentSession implements AgentSession {
 
   /**
    * Registers the Claude process with Remote Control so the session also shows up in the Claude
-   * apps, and publishes its URL as `metadata.remoteControlUrl`. Each new Claude process registers
+   * apps under the same name as in Paseo (the agent title), and publishes its URL as
+   * `metadata.remoteControlUrl`. Each new Claude process registers
    * again. The SDK ships `enableRemoteControl` without a type declaration, hence the narrow cast.
    * Set PASEO_CLAUDE_REMOTE_CONTROL=0 in the daemon environment to turn it off.
    */
@@ -3797,7 +3798,8 @@ class ClaudeAgentSession implements AgentSession {
     const enable = enableFn.bind(control);
     const name = (
       this.launchEnv?.[CLAUDE_REMOTE_CONTROL_NAME_ENV]?.trim() ||
-      `paseo: ${this.config.title?.trim() || path.basename(this.config.cwd)}`
+      this.config.title?.trim() ||
+      path.basename(this.config.cwd)
     ).slice(0, 80);
     const register = () =>
       this.registerRemoteControl({
