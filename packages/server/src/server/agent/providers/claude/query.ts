@@ -7,6 +7,7 @@ import {
 } from "../../provider-launch-config.js";
 import { buildSelfNodeCommand, createExternalProcessEnv } from "../../../paseo-env.js";
 import { spawnProcess } from "../../../../utils/spawn.js";
+import { claudeHoldEnabled, spawnHeldClaude } from "./hold-client.js";
 
 // Keep the raw SDK query import in this module only. Claude process launch behavior
 // must stay shared between production and tests so Windows .cmd/.bat handling cannot
@@ -22,6 +23,15 @@ export interface ClaudeQueryContext {
   queryFactory?: ClaudeQueryFactory;
   /** Called with the spawned child process so the caller can tree-kill it on close. */
   onChildProcess?: (child: ChildProcess) => void;
+  /**
+   * Prototype (PASEO_CLAUDE_HOLD=1): run Claude under a persistent hold keyed by this id (the Paseo
+   * agent id), so the process survives a daemon restart. See hold-client.ts.
+   */
+  hold?: {
+    id: string;
+    claudeConfigDir: string;
+    log: (message: string, extra?: Record<string, unknown>) => void;
+  };
 }
 
 function isChildProcessWithStreams(child: ChildProcess): child is ChildProcessWithoutNullStreams {
@@ -57,7 +67,7 @@ function applyRuntimeSettingsToClaudeOptions(
   options: ClaudeOptions,
   context: ClaudeQueryContext,
 ): ClaudeOptions {
-  const { runtimeSettings, launchEnv, onChildProcess } = context;
+  const { runtimeSettings, launchEnv, onChildProcess, hold } = context;
   return {
     ...options,
     spawnClaudeCodeProcess: (spawnOptions) => {
@@ -82,6 +92,24 @@ function applyRuntimeSettingsToClaudeOptions(
         : null;
       const command = selfNodeCommand?.command ?? resolved.command;
       const args = selfNodeCommand?.args ?? resolved.args;
+      if (hold && claudeHoldEnabled()) {
+        const held = spawnHeldClaude({
+          holdId: hold.id,
+          command,
+          args,
+          cwd: spawnOptions.cwd,
+          env: selfNodeCommand ? selfNodeCommand.env : providerEnv,
+          claudeConfigDir: hold.claudeConfigDir,
+          log: hold.log,
+        });
+        onChildProcess?.(held);
+        if (typeof options.stderr === "function") {
+          held.stderr?.on("data", (chunk: Buffer | string) => {
+            options.stderr?.(chunk.toString());
+          });
+        }
+        return held as ChildProcessWithoutNullStreams;
+      }
       const child = spawnProcess(command, args, {
         cwd: spawnOptions.cwd,
         ...(selfNodeCommand

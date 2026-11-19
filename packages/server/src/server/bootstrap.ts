@@ -1,4 +1,5 @@
 import { unarchiveWorkspaceAgents } from "./workspace-archive-service.js";
+import { setClaudeHoldDetaching } from "./agent/providers/claude/hold-client.js";
 import { createRestartRecovery } from "./agent/restart-recovery/index.js";
 import { sendPromptToAgent, unarchiveAgentState } from "./agent/agent-prompt.js";
 import { createChangeRequestWatches } from "./agent/change-request-watches/index.js";
@@ -2025,6 +2026,8 @@ export async function createPaseoDaemon(
     await wsServer?.agentMessages.close();
     agentManager.prepareForShutdown();
     await restartRecovery.captureRunningAgents();
+    // Prototype: held Claude sessions detach instead of ending (PASEO_CLAUDE_HOLD=1).
+    setClaudeHoldDetaching(true);
     await closeAllAgents(logger, agentManager);
     await withTimeout({
       promise: pluginRuntime.drainEvents(),

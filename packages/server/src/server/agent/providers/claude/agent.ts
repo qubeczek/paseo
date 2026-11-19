@@ -98,6 +98,7 @@ import {
 import { normalizeProviderReplayTimestamp } from "../../provider-history-timestamps.js";
 import { claudeConfigDir, claudeProjectDirSync, claudeTranscriptPath } from "./project-dir.js";
 import { readClaudeBridgeState, RemoteControlKeeper } from "./remote-control.js";
+import { isClaudeHoldDetaching, isHeldClaudeProcess } from "./hold-client.js";
 import { THINKING_APPLIES_NEXT_TURN_NOTICE } from "../../provider-notices.js";
 import {
   isProviderImageMarkdown,
@@ -3244,6 +3245,11 @@ class ClaudeAgentSession implements AgentSession {
     // Terminate the entire process tree (claude + MCP children) to prevent
     // orphan accumulation. The SDK's internal cleanup may only kill the
     // direct child process.
+    if (this.childProcess && isHeldClaudeProcess(this.childProcess) && isClaudeHoldDetaching()) {
+      // Daemon shutdown: the held Claude keeps running for the next daemon to attach to.
+      this.logger.info({ pid: this.childProcess.pid }, "claude hold: detached on shutdown");
+      this.childProcess = null;
+    }
     if (this.childProcess) {
       const result = await terminateWithTreeKill(this.childProcess, {
         gracefulTimeoutMs: 2_000,
@@ -3755,6 +3761,16 @@ class ClaudeAgentSession implements AgentSession {
         runtimeSettings: this.runtimeSettings,
         launchEnv: this.launchEnv,
         queryFactory: this.queryFactory,
+        ...(this.agentId
+          ? {
+              hold: {
+                id: this.agentId,
+                claudeConfigDir: claudeConfigDir(this.harnessEnvironment),
+                log: (message: string, extra?: Record<string, unknown>) =>
+                  this.logger.info(extra ?? {}, message),
+              },
+            }
+          : {}),
         onChildProcess: (child) => {
           this.childProcess = child;
           child.once("exit", (code, signal) => this.handleRuntimeExit(child, code, signal));
