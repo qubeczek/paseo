@@ -3750,6 +3750,7 @@ class ClaudeAgentSession implements AgentSession {
       },
     );
     this.queryStarting = false;
+    this.enableRemoteControl(this.query);
     const fastMode = this.resolveFastModeSetting();
     const ultracode = this.independentUltracode ? this.resolveUltracodeSetting() : undefined;
     if (fastMode !== null || ultracode !== undefined) {
@@ -3763,6 +3764,51 @@ class ClaudeAgentSession implements AgentSession {
     // ensureQuery() (for listCommands()/setMode()), and sharing the same query
     // control plane can cause those calls to wait behind supportedModels().
     return this.query;
+  }
+
+  /**
+   * Registers the Claude process with Remote Control so the session also shows up in the Claude
+   * apps, and publishes its URL as `metadata.remoteControlUrl`. Each new Claude process registers
+   * again. The SDK ships `enableRemoteControl` without a type declaration, hence the narrow cast.
+   * Set PASEO_CLAUDE_REMOTE_CONTROL=0 in the daemon environment to turn it off.
+   */
+  private enableRemoteControl(query: Query): void {
+    if (process.env.PASEO_CLAUDE_REMOTE_CONTROL === "0") return;
+    const control = query as Query & {
+      enableRemoteControl?: (
+        enabled: boolean,
+        name?: string,
+      ) => Promise<{ session_url?: unknown } | undefined>;
+    };
+    if (typeof control.enableRemoteControl !== "function") return;
+    const name = `paseo: ${this.config.title?.trim() || path.basename(this.config.cwd)}`.slice(
+      0,
+      80,
+    );
+    void this.registerRemoteControl({
+      query,
+      enable: control.enableRemoteControl.bind(control),
+      name,
+    });
+  }
+
+  private async registerRemoteControl(params: {
+    query: Query;
+    enable: (enabled: boolean, name?: string) => Promise<{ session_url?: unknown } | undefined>;
+    name: string;
+  }): Promise<void> {
+    try {
+      const response = await params.enable(true, params.name);
+      const url = typeof response?.session_url === "string" ? response.session_url : null;
+      this.logger.info({ remoteControlUrl: url }, "Claude Remote Control enabled");
+      if (url && this.query === params.query) {
+        this.dispatchEvents([
+          { type: "metadata_changed", provider: "claude", patch: { remoteControlUrl: url } },
+        ]);
+      }
+    } catch (error) {
+      this.logger.warn({ err: error }, "Claude Remote Control could not be enabled");
+    }
   }
 
   private async awaitWithTimeout(

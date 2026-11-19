@@ -5398,8 +5398,22 @@ export class AgentManager {
         this.onStreamPermissionResolved({ agent, event, options, flags });
         return undefined;
       default:
+        this.onStreamMetadataChanged(agent, event, flags);
         return undefined;
     }
+  }
+
+  /** Kept out of the switch above, which is at its complexity budget. */
+  private onStreamMetadataChanged(
+    agent: ActiveManagedAgent,
+    event: AgentStreamEvent,
+    flags: StreamEventFlags,
+  ): void {
+    if (event.type !== "metadata_changed") return;
+    agent.metadata = applyRecordPatch<JsonValue>(agent.metadata, event.patch);
+    this.touchUpdatedAt(agent);
+    flags.shouldDispatchEvent = false;
+    this.emitState(agent);
   }
 
   private onStreamThreadStarted(agent: ActiveManagedAgent): void {

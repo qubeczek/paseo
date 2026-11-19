@@ -437,6 +437,11 @@ export type AgentStreamEvent =
    * of opening goes in `openOptionsPatch` and the result of `applyOptions` is its return value.
    */
   | { type: "options_changed"; provider: AgentProvider; patch: Record<string, unknown> }
+  /**
+   * The provider set or cleared entries in the agent's metadata (the map plugins read as
+   * `agent.metadata`), e.g. the Claude Remote Control session URL. `null` removes a key.
+   */
+  | { type: "metadata_changed"; provider: AgentProvider; patch: Record<string, JsonValue | null> }
   | {
       type: "turn_failed";
       provider: AgentProvider;
