@@ -97,6 +97,7 @@ import {
 } from "./rewind.js";
 import { normalizeProviderReplayTimestamp } from "../../provider-history-timestamps.js";
 import { claudeConfigDir, claudeProjectDirSync, claudeTranscriptPath } from "./project-dir.js";
+import { readClaudeBridgeState, RemoteControlKeeper } from "./remote-control.js";
 import { THINKING_APPLIES_NEXT_TURN_NOTICE } from "../../provider-notices.js";
 import {
   isProviderImageMarkdown,
@@ -2338,6 +2339,7 @@ class ClaudeAgentSession implements AgentSession {
   private readonly harnessEnvironment: Record<string, string>;
   private readonly usageSessionKey = randomUUID();
   private childProcess: ChildProcess | null = null;
+  private remoteControlTimer: ReturnType<typeof setInterval> | null = null;
   private input: AsyncMessageInput<SDKUserMessage> | null = null;
   /** The exact SDK query/input pair that owns the current foreground turn. */
   private activeForegroundQuery: Query | null = null;
@@ -3201,6 +3203,7 @@ class ClaudeAgentSession implements AgentSession {
   }
 
   async close(): Promise<void> {
+    this.stopRemoteControlWatch();
     this.logger.trace(
       {
         agentId: this.agentId,
@@ -3676,6 +3679,7 @@ class ClaudeAgentSession implements AgentSession {
   }
 
   private async retireQuery(): Promise<void> {
+    this.stopRemoteControlWatch();
     const oldQuery = this.query;
     if (!oldQuery) return;
     const oldInput = this.input;
@@ -3788,23 +3792,60 @@ class ClaudeAgentSession implements AgentSession {
         name?: string,
       ) => Promise<{ session_url?: unknown } | undefined>;
     };
-    if (typeof control.enableRemoteControl !== "function") return;
+    const enableFn = control.enableRemoteControl;
+    if (typeof enableFn !== "function") return;
+    const enable = enableFn.bind(control);
     const name = (
       this.launchEnv?.[CLAUDE_REMOTE_CONTROL_NAME_ENV]?.trim() ||
       `paseo: ${this.config.title?.trim() || path.basename(this.config.cwd)}`
     ).slice(0, 80);
-    void this.registerRemoteControl({
-      query,
-      enable: control.enableRemoteControl.bind(control),
-      name,
+    const register = () =>
+      this.registerRemoteControl({
+        query,
+        enable,
+        name,
+      });
+    void register();
+    this.watchRemoteControl(query, register);
+  }
+
+  /**
+   * Claude drops the Remote Control bridge of every session on the host when the account changes
+   * (`/login`) and does not reconnect by itself, so check the session registry once a minute and
+   * register again in the same process.
+   */
+  private watchRemoteControl(query: Query, register: () => Promise<boolean>): void {
+    this.stopRemoteControlWatch();
+    const keeper = new RemoteControlKeeper({
+      readState: () =>
+        readClaudeBridgeState(claudeConfigDir(this.harnessEnvironment), this.childProcess?.pid),
+      reconnect: () => {
+        this.logger.info("Claude Remote Control bridge dropped, registering again");
+        return register();
+      },
+      onGiveUp: () => this.logger.warn("Claude Remote Control bridge could not be restored"),
     });
+    const timer = setInterval(() => {
+      if (this.query !== query) {
+        this.stopRemoteControlWatch();
+        return;
+      }
+      void keeper.tick();
+    }, 60_000);
+    timer.unref?.();
+    this.remoteControlTimer = timer;
+  }
+
+  private stopRemoteControlWatch(): void {
+    if (this.remoteControlTimer) clearInterval(this.remoteControlTimer);
+    this.remoteControlTimer = null;
   }
 
   private async registerRemoteControl(params: {
     query: Query;
     enable: (enabled: boolean, name?: string) => Promise<{ session_url?: unknown } | undefined>;
     name: string;
-  }): Promise<void> {
+  }): Promise<boolean> {
     try {
       const response = await params.enable(true, params.name);
       const url = typeof response?.session_url === "string" ? response.session_url : null;
@@ -3814,8 +3855,10 @@ class ClaudeAgentSession implements AgentSession {
           { type: "metadata_changed", provider: "claude", patch: { remoteControlUrl: url } },
         ]);
       }
+      return url !== null;
     } catch (error) {
       this.logger.warn({ err: error }, "Claude Remote Control could not be enabled");
+      return false;
     }
   }
 
