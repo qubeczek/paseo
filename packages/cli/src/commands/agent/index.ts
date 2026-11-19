@@ -106,6 +106,18 @@ export function createAgentCommand(): Command {
         "Add/set label(s) on the agent (can be used multiple times or comma-separated)",
         collectMultiple,
         [],
+      )
+      .option(
+        "--env <key=value>",
+        "Set a launch environment variable (can be used multiple times); applies the next time the session opens",
+        collectMultiple,
+        [],
+      )
+      .option(
+        "--unset-env <key>",
+        "Remove a launch environment variable (can be used multiple times)",
+        collectMultiple,
+        [],
       ),
   ).action(withOutput(runUpdateCommand));
 

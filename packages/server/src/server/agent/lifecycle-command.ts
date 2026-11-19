@@ -166,21 +166,24 @@ export async function updateAgentCommand(
     agentId: string;
     name?: string;
     labels?: Record<string, string>;
+    env?: Record<string, string | null>;
   },
 ): Promise<UpdateAgentResult> {
   const title = input.name?.trim();
   const labels = input.labels && Object.keys(input.labels).length > 0 ? input.labels : undefined;
+  const env = input.env && Object.keys(input.env).length > 0 ? input.env : undefined;
 
-  if (!title && !labels) {
+  if (!title && !labels && !env) {
     return {
       accepted: false,
-      error: "Nothing to update (provide name and/or labels)",
+      error: "Nothing to update (provide name, labels and/or env)",
     };
   }
 
   await dependencies.agentManager.updateAgentMetadata(input.agentId, {
     ...(title ? { title } : {}),
     ...(labels ? { labels } : {}),
+    ...(env ? { env } : {}),
   });
 
   return {

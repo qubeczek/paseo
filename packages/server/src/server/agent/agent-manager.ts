@@ -635,6 +635,16 @@ interface AgentMetadataPatch {
   title?: string;
   labels?: AgentLabelPatch;
   metadata?: Record<string, JsonValue | null>;
+  env?: Record<string, string | null>;
+}
+
+/** Launch env after a patch; `null` removes a variable and an empty env is no env. */
+function patchLaunchEnv(
+  current: Record<string, string> | undefined,
+  patch: Record<string, string | null>,
+): Record<string, string> | undefined {
+  const next = applyRecordPatch<string>(current ?? {}, patch);
+  return Object.keys(next).length > 0 ? next : undefined;
 }
 
 const SYSTEM_ERROR_PREFIX = "[System Error]";
@@ -2744,6 +2754,7 @@ export class AgentManager {
       ...(patch.title ? { title: patch.title } : {}),
       ...(patch.labels ? { labels: applyRecordPatch(record.labels, patch.labels) } : {}),
       ...(patch.metadata ? { metadata: applyRecordPatch(record.metadata, patch.metadata) } : {}),
+      ...(patch.env ? { launchEnv: patchLaunchEnv(record.launchEnv, patch.env) } : {}),
       updatedAt: this.nextStoredUpdatedAt(record),
     };
     await registry.upsert(nextRecord);
@@ -2984,6 +2995,7 @@ export class AgentManager {
     updates: {
       title?: string;
       labels?: Record<string, string>;
+      env?: Record<string, string | null>;
     },
   ): Promise<void> {
     await this.runLifecycleMutation(agentId, () =>
@@ -2996,6 +3008,7 @@ export class AgentManager {
     updates: {
       title?: string;
       labels?: Record<string, string>;
+      env?: Record<string, string | null>;
     },
   ): Promise<void> {
     const liveAgent = this.getAgent(agentId);
@@ -3005,6 +3018,11 @@ export class AgentManager {
       }
       if (updates.labels) {
         await this.writeLabels(agentId, updates.labels);
+      }
+      if (updates.env) {
+        // The running provider session keeps the env it opened with; the next open uses this one.
+        liveAgent.launchEnv = patchLaunchEnv(liveAgent.launchEnv, updates.env);
+        await this.persistSnapshot(liveAgent);
       }
       return;
     }

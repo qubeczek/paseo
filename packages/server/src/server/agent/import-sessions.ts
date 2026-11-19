@@ -35,6 +35,7 @@ export type ImportSessionAgentManager = AgentLoaderManager &
     | "importProviderSession"
     | "notifyAgentState"
     | "unarchiveSnapshot"
+    | "updateAgentMetadata"
   >;
 
 const providerSessionImportMutations = new WeakMap<
@@ -233,6 +234,15 @@ async function importProviderSessionNow(
       workspaceId,
       labels: Object.keys(labelPatch).length > 0 ? labelPatch : undefined,
     });
+    if (env && Object.keys(env).length > 0) {
+      // Replaces the saved launch env before the session opens again.
+      const removed = Object.fromEntries(
+        Object.keys(archivedRecord.launchEnv ?? {}).map((key) => [key, null]),
+      );
+      await input.agentManager.updateAgentMetadata(archivedRecord.id, {
+        env: { ...removed, ...env },
+      });
+    }
     try {
       const snapshot = await ensureAgentLoaded(archivedRecord.id, {
         agentManager: input.agentManager,

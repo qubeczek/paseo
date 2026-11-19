@@ -1046,6 +1046,8 @@ export const UpdateAgentRequestMessageSchema = z.object({
   agentId: z.string(),
   name: z.string().optional(),
   labels: z.record(z.string(), z.string()).optional(),
+  /** Launch env patch; `null` removes a variable. Applies the next time the session opens. */
+  env: z.record(z.string(), z.string().nullable()).optional(),
   requestId: z.string(),
 });
 

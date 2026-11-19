@@ -2,6 +2,7 @@ import type { Command } from "commander";
 import type { AgentProviderNotice } from "@getpaseo/protocol/agent-types";
 import type { AgentSnapshotPayload } from "@getpaseo/protocol/messages";
 import { connectToDaemon } from "../../utils/client.js";
+import { parseRunEnv } from "./run.js";
 import type {
   CommandOptions,
   SingleResult,
@@ -34,6 +35,8 @@ export const updateSchema: OutputSchema<AgentUpdateResult> = {
 export interface AgentUpdateOptions extends CommandOptions {
   name?: string;
   label?: string[];
+  env?: string[];
+  unsetEnv?: string[];
   thinking?: string;
   host?: string;
 }
@@ -43,6 +46,7 @@ export type AgentUpdateCommandResult = SingleResult<AgentUpdateResult>;
 export interface AgentMetadataChanges {
   name?: string;
   labels?: Record<string, string>;
+  env?: Record<string, string | null>;
 }
 
 interface AgentUpdateServerInfo {
@@ -170,11 +174,13 @@ function parseAgentChanges(options: AgentUpdateOptions): AgentChanges {
     } satisfies CommandError;
   }
 
-  const hasMetadataUpdates = Boolean(name) || Object.keys(labels).length > 0;
+  const env = parseEnvChanges(options);
+  const hasMetadataUpdates =
+    Boolean(name) || Object.keys(labels).length > 0 || Object.keys(env).length > 0;
   if (hasMetadataUpdates && thinkingOptionId) {
     throw {
       code: "INVALID_OPTIONS",
-      message: "--thinking cannot be combined with --name or --label",
+      message: "--thinking cannot be combined with --name, --label or --env",
       details: "Run separate agent update commands for runtime settings and metadata.",
     } satisfies CommandError;
   }
@@ -182,7 +188,8 @@ function parseAgentChanges(options: AgentUpdateOptions): AgentChanges {
     throw {
       code: "NO_CHANGES_PROVIDED",
       message: "Nothing to update",
-      details: "Provide at least one of: --name <name>, --label <key=value>, --thinking <id>",
+      details:
+        "Provide at least one of: --name <name>, --label <key=value>, --env <key=value>, --unset-env <key>, --thinking <id>",
     } satisfies CommandError;
   }
 
@@ -194,8 +201,30 @@ function parseAgentChanges(options: AgentUpdateOptions): AgentChanges {
     updates: {
       ...(name ? { name } : {}),
       ...(Object.keys(labels).length > 0 ? { labels } : {}),
+      ...(Object.keys(env).length > 0 ? { env } : {}),
     },
   };
+}
+
+function parseEnvChanges(options: AgentUpdateOptions): Record<string, string | null> {
+  const env: Record<string, string | null> = { ...parseRunEnv(options.env) };
+  for (const rawKey of options.unsetEnv ?? []) {
+    const key = rawKey.trim();
+    if (!key) {
+      throw {
+        code: "INVALID_ENV",
+        message: "--unset-env needs a variable name",
+      } satisfies CommandError;
+    }
+    if (key in env) {
+      throw {
+        code: "INVALID_OPTIONS",
+        message: `${key} is both set and unset`,
+      } satisfies CommandError;
+    }
+    env[key] = null;
+  }
+  return env;
 }
 
 export async function runUpdateCommand(
