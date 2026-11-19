@@ -3019,10 +3019,11 @@ export class AgentManager {
       if (updates.labels) {
         await this.writeLabels(agentId, updates.labels);
       }
-      if (updates.env) {
+      const managed = this.agents.get(agentId);
+      if (updates.env && managed) {
         // The running provider session keeps the env it opened with; the next open uses this one.
-        liveAgent.launchEnv = patchLaunchEnv(liveAgent.launchEnv, updates.env);
-        await this.persistSnapshot(liveAgent);
+        managed.launchEnv = patchLaunchEnv(managed.launchEnv, updates.env);
+        await this.persistSnapshot(managed);
       }
       return;
     }
