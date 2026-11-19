@@ -78,3 +78,47 @@ export function computeNotificationPlan({
 export function isPushEligibleAttentionReason(reason: AgentAttentionReason): boolean {
   return reason !== "error";
 }
+
+/**
+ * Fork: which attention reasons notify, and how long a waiting state must last before a push.
+ * PASEO_NOTIFY_REASONS: comma list of finished,permission,error (unset = upstream behaviour).
+ * PASEO_PUSH_DELAY_MS: a push for permission/error waits this long and is sent only if the agent
+ * is still waiting; finished turns are never delayed.
+ */
+export interface AttentionNotifyPolicy {
+  reasons: ReadonlySet<AgentAttentionReason> | null;
+  pushDelayMs: number;
+}
+
+const ATTENTION_REASONS: ReadonlySet<string> = new Set(["finished", "permission", "error"]);
+
+export function attentionNotifyPolicyFromEnv(env: NodeJS.ProcessEnv): AttentionNotifyPolicy {
+  const raw = env.PASEO_NOTIFY_REASONS?.trim();
+  const reasons =
+    raw === undefined || raw === ""
+      ? null
+      : new Set(
+          raw
+            .split(",")
+            .map((part) => part.trim())
+            .filter((part): part is AgentAttentionReason => ATTENTION_REASONS.has(part)),
+        );
+  const delay = Number(env.PASEO_PUSH_DELAY_MS);
+  return { reasons, pushDelayMs: Number.isFinite(delay) && delay > 0 ? delay : 0 };
+}
+
+export function attentionReasonNotifies(
+  policy: AttentionNotifyPolicy,
+  reason: AgentAttentionReason,
+): boolean {
+  return policy.reasons === null ? true : policy.reasons.has(reason);
+}
+
+export function attentionPushAllowed(
+  policy: AttentionNotifyPolicy,
+  reason: AgentAttentionReason,
+): boolean {
+  return policy.reasons === null
+    ? isPushEligibleAttentionReason(reason)
+    : policy.reasons.has(reason);
+}

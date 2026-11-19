@@ -88,6 +88,7 @@ import {
   createPushNotifications,
   type PushNotifications,
   type PushNotificationSender,
+  type PushPayload,
 } from "./push/index.js";
 import type { ScriptHealthState } from "./script-health-monitor.js";
 import type { ServiceProxySubsystem } from "./service-proxy.js";
@@ -95,13 +96,17 @@ import type { WorkspaceScriptRuntimeStore } from "./workspace-script-runtime-sto
 import type { SpeechReadinessSnapshot, SpeechService } from "./speech/speech-runtime.js";
 import type { VoiceCallerContext, VoiceSpeakHandler } from "./voice-types.js";
 import {
+  attentionNotifyPolicyFromEnv,
+  attentionPushAllowed,
+  attentionReasonNotifies,
   computeNotificationPlan,
-  isPushEligibleAttentionReason,
+  type AttentionNotifyPolicy,
   type ClientPresenceState,
 } from "./agent-attention-policy.js";
 import {
   buildAgentAttentionNotificationPayload,
   findLatestPermissionRequest,
+  type AgentAttentionReason,
 } from "@getpaseo/protocol/agent-attention-notification";
 import { createGitHubService } from "../services/github-service.js";
 import type { ForgeService } from "../services/forge-service.js";
@@ -599,6 +604,10 @@ export class VoiceAssistantWebSocketServer {
   private readonly daemonConfigStore: DaemonConfigStore;
   private readonly pushNotifications: PushNotifications;
   private readonly pushNotificationSender: PushNotificationSender;
+  private readonly attentionNotifyPolicy: AttentionNotifyPolicy = attentionNotifyPolicyFromEnv(
+    process.env,
+  );
+  private readonly delayedAttentionPushes = new Map<string, ReturnType<typeof setTimeout>>();
   private readonly mcpBaseUrl: string | null;
   private speech!: SpeechService | null;
   private terminalManager!: TerminalManager | null;
@@ -2963,18 +2972,19 @@ export class VoiceAssistantWebSocketServer {
     const plan = computeNotificationPlan({
       allStates,
       focusTarget: { kind: "agent", id: params.agentId },
-      pushEligible: isPushEligibleAttentionReason(params.reason),
+      pushEligible: attentionPushAllowed(this.attentionNotifyPolicy, params.reason),
       nowMs,
     });
 
+    this.cancelDelayedAttentionPush(params.agentId);
     if (plan.shouldPush) {
-      void this.pushNotificationSender.send(notification).catch((err) => {
-        this.logger.warn({ err, agentId: params.agentId }, "Failed to send push notification");
-      });
+      this.sendAttentionPush(params.agentId, params.reason, notification);
     }
+    const reasonNotifies = attentionReasonNotifies(this.attentionNotifyPolicy, params.reason);
 
     for (const { ws } of clientEntries) {
       const shouldNotify =
+        reasonNotifies &&
         plan.inAppRecipientIndex !== null &&
         notificationEntries[plan.inAppRecipientIndex]?.ws === ws;
       const timestamp = new Date().toISOString();
@@ -3014,6 +3024,42 @@ export class VoiceAssistantWebSocketServer {
         this.sessions.get(ws)!.session.publishToSource(ws, message.message);
       else this.sendToClient(ws, message);
     }
+  }
+
+  private cancelDelayedAttentionPush(agentId: string): void {
+    const timer = this.delayedAttentionPushes.get(agentId);
+    if (timer) clearTimeout(timer);
+    this.delayedAttentionPushes.delete(agentId);
+  }
+
+  /** Still waiting for the owner: an unanswered permission, or the agent stuck in error. */
+  private agentStillNeedsAttention(agentId: string, reason: AgentAttentionReason): boolean {
+    if (reason === "permission") return this.agentManager.hasPendingPermissions(agentId);
+    if (reason === "error") return this.agentManager.getAgent(agentId)?.lifecycle === "error";
+    return true;
+  }
+
+  private sendAttentionPush(
+    agentId: string,
+    reason: AgentAttentionReason,
+    notification: PushPayload,
+  ): void {
+    const send = () => {
+      void this.pushNotificationSender.send(notification).catch((err) => {
+        this.logger.warn({ err, agentId }, "Failed to send push notification");
+      });
+    };
+    const delayMs = this.attentionNotifyPolicy.pushDelayMs;
+    if (delayMs <= 0 || reason === "finished") {
+      send();
+      return;
+    }
+    const timer = setTimeout(() => {
+      this.delayedAttentionPushes.delete(agentId);
+      if (this.agentStillNeedsAttention(agentId, reason)) send();
+    }, delayMs);
+    timer.unref?.();
+    this.delayedAttentionPushes.set(agentId, timer);
   }
 
   private async broadcastTerminalAttention(params: {

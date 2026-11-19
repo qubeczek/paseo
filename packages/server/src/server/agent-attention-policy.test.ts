@@ -1,5 +1,8 @@
 import { describe, expect, it } from "vitest";
 import {
+  attentionNotifyPolicyFromEnv,
+  attentionPushAllowed,
+  attentionReasonNotifies,
   computeNotificationPlan,
   isPushEligibleAttentionReason,
   type ClientPresenceState,
@@ -230,5 +233,27 @@ describe("isPushEligibleAttentionReason", () => {
     expect(isPushEligibleAttentionReason("finished")).toBe(true);
     expect(isPushEligibleAttentionReason("permission")).toBe(true);
     expect(isPushEligibleAttentionReason("error")).toBe(false);
+  });
+});
+
+describe("attentionNotifyPolicyFromEnv", () => {
+  it("keeps upstream behaviour when unset", () => {
+    const policy = attentionNotifyPolicyFromEnv({});
+    expect(policy.pushDelayMs).toBe(0);
+    expect(attentionReasonNotifies(policy, "finished")).toBe(true);
+    expect(attentionPushAllowed(policy, "finished")).toBe(true);
+    expect(attentionPushAllowed(policy, "error")).toBe(false);
+  });
+
+  it("limits reasons and reads the push delay", () => {
+    const policy = attentionNotifyPolicyFromEnv({
+      PASEO_NOTIFY_REASONS: "permission, error,bogus",
+      PASEO_PUSH_DELAY_MS: "120000",
+    });
+    expect(policy.pushDelayMs).toBe(120_000);
+    expect(attentionReasonNotifies(policy, "finished")).toBe(false);
+    expect(attentionPushAllowed(policy, "finished")).toBe(false);
+    expect(attentionPushAllowed(policy, "permission")).toBe(true);
+    expect(attentionPushAllowed(policy, "error")).toBe(true);
   });
 });
