@@ -18,7 +18,16 @@ import { boardStatus, layoutSettings, type Backlog, type Layout } from "../share
 import { LayoutEditor } from "./layout-editor";
 import { sessionState, since, stateColor, storyOf, type SessionState, type StateKind } from "./status";
 
-type Props = PluginScreenProps;
+/** What the board needs from its surface: a full screen (web, app 0.17+) or a sidebar view (app 0.16). */
+export interface BoardProps {
+  theme: PluginScreenProps["theme"];
+  layout: PluginScreenProps["layout"];
+  /** Host that answers the plugin RPC; null when the surface does not say (sidebar view). */
+  hostId: string | null;
+  hostLabel: string;
+  openAgent(agent: PluginAgentSnapshot): void;
+}
+type Props = BoardProps;
 
 const EMPTY_LAYOUT: Layout = { sort: "waiting", order: [], kinds: {}, hidden: [], collapsed: [], noBacklog: [] };
 // Archived agents never reach the plugin snapshot; a closed one is a resumable session without a process.
@@ -47,7 +56,7 @@ function tint(color: string, alpha: number): string {
 interface BoardData {
   paused: Map<string, number | null>;
   backlogs: Map<string, Backlog>;
-  hostId: string;
+  hostId: string | null;
 }
 
 function useBoardData(props: Props, roots: string[]): BoardData {
@@ -63,13 +72,13 @@ function useBoardData(props: Props, roots: string[]): BoardData {
     for (const entry of query.data?.paused ?? []) paused.set(entry.agentId, entry.resetAt);
     const backlogs = new Map<string, Backlog>();
     for (const backlog of query.data?.backlogs ?? []) backlogs.set(backlog.root, backlog);
-    return { paused, backlogs, hostId: props.host.id };
-  }, [query.data, props.host.id]);
+    return { paused, backlogs, hostId: props.hostId };
+  }, [query.data, props.hostId]);
 }
 
 /** Paused entries belong to the plugin's host; agents elsewhere are never paused by it. */
 function pausedFor(agent: PluginAgentSnapshot, data: BoardData): number | null | undefined {
-  if (agent.hostId !== data.hostId || !data.paused.has(agent.id)) return undefined;
+  if ((data.hostId !== null && agent.hostId !== data.hostId) || !data.paused.has(agent.id)) return undefined;
   return data.paused.get(agent.id) ?? null;
 }
 
@@ -156,7 +165,7 @@ function remoteControlUrl(agent: PluginAgentSnapshot): string | null {
 }
 
 function openAgent(props: Props, agent: PluginAgentSnapshot) {
-  props.navigation?.openAgent({ agentId: agent.id, serverId: agent.hostId });
+  props.openAgent(agent);
 }
 
 // ---------------------------------------------------------------- header
@@ -251,7 +260,7 @@ function NeedsYouCard({ reference, props, styles, data }: { reference: AgentRef;
         </Text>
       </Text>
       <View style={[styles.row, { flexWrap: "wrap", gap: 8 }]}>
-        {props.navigation ? <Button label="Otwórz sesję" onPress={() => openAgent(props, agent)} styles={styles} color={color} /> : null}
+        <Button label="Otwórz sesję" onPress={() => openAgent(props, agent)} styles={styles} color={color} />
         {url ? <Button label="Claude ↗" onPress={() => void Linking.openURL(url)} styles={styles} /> : null}
       </View>
     </View>
@@ -607,7 +616,7 @@ function BacklogTile({ name, backlog, styles, props }: { name: string; backlog: 
           </View>
         ) : null}
         <Text style={[styles.muted, { fontSize: 11 }]}>
-          odczyt {new Date(backlog.readAt).toTimeString().slice(0, 5)} · {props.host.label}
+          odczyt {new Date(backlog.readAt).toTimeString().slice(0, 5)}{props.hostLabel ? ` · ${props.hostLabel}` : ""}
         </Text>
       </View>
     </View>
@@ -633,7 +642,7 @@ export function Board(props: Props) {
   const layout = settings.status === "ready" ? settings.values : EMPTY_LAYOUT;
   const groups = useProjectGroups();
   const [editing, setEditing] = useState(false);
-  const localWorkspaces = useWorkspaces({ where: (w) => !w.background && w.hostId === props.host.id });
+  const localWorkspaces = useWorkspaces({ where: (w) => !w.background && (props.hostId === null || w.hostId === props.hostId) });
 
   const [roots, setRoots] = useState<Record<string, string>>({});
   const onRoot = useCallback((name: string, root: string) => {
