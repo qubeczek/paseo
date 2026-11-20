@@ -12,7 +12,7 @@ import {
   type PluginScreenProps,
   type WorkspaceRef,
 } from "@getpaseo/plugin/client";
-import { useCallback, useEffect, useMemo, useState, type ReactNode } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { Linking, Pressable, ScrollView, Text, View } from "react-native";
 import { boardStatus, layoutSettings, type Backlog, type Layout } from "../shared/contracts";
 import { ALL_HOSTS, callHostRpc } from "./hosts";
@@ -68,19 +68,25 @@ interface BoardData {
 
 const at = (hostId: string, value: string) => `${hostId}|${value}`;
 
-/** Asks every host (fork app) or the selected one for backlogs of its project roots and its paused sessions. */
+type BoardStatusOutput = import("zod").output<(typeof boardStatus)["output"]>;
+type HostResult = { hostId: string; result: BoardStatusOutput | null };
+
+/**
+ * Asks every host (fork app) or the selected one for backlogs of its project roots and its paused sessions.
+ * Keeps each host's last good answer while a new query runs or a host fails once, so tiles do not flicker.
+ */
 function useBoardData(props: Props, request: Record<string, string[]>): BoardData {
   const status = useRpc(boardStatus);
   const hosts = useHosts();
-  const online = hosts.filter((h) => h.status === "online").map((h) => h.serverId);
+  const online = hosts.filter((h) => h.status === "online").map((h) => h.serverId).sort();
   const key = JSON.stringify([ALL_HOSTS ? online : [props.hostId], request]);
   const query = useQuery({
     queryKey: ["board.status", key],
-    queryFn: async () => {
+    queryFn: async (): Promise<HostResult[]> => {
       const call = callHostRpc;
       if (!call) {
         const hostId = props.hostId ?? SELECTED;
-        return [{ hostId, result: await status({ roots: request[hostId] ?? [] }) }];
+        return [{ hostId, result: await status({ roots: request[hostId] ?? [] }).catch(() => null) }];
       }
       return Promise.all(
         online.map(async (hostId) => ({
@@ -92,15 +98,16 @@ function useBoardData(props: Props, request: Record<string, string[]>): BoardDat
     refetchInterval: 60_000,
     staleTime: 30_000,
   });
+  const lastGood = useRef(new Map<string, BoardStatusOutput>());
   return useMemo(() => {
-    const paused = new Map<string, number | null>();
-    const backlogs = new Map<string, Backlog>();
     const failed: string[] = [];
     for (const { hostId, result } of query.data ?? []) {
-      if (!result) {
-        failed.push(hostId);
-        continue;
-      }
+      if (result) lastGood.current.set(hostId, result);
+      else failed.push(hostId);
+    }
+    const paused = new Map<string, number | null>();
+    const backlogs = new Map<string, Backlog>();
+    for (const [hostId, result] of lastGood.current) {
       for (const entry of result.paused) paused.set(at(hostId, entry.agentId), entry.resetAt);
       for (const backlog of result.backlogs) backlogs.set(at(hostId, backlog.root), backlog);
     }
