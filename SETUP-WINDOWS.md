@@ -9,6 +9,11 @@ Ten fork (gałąź `claude-remote-control`) zawiera poprawki: każda sesja Claud
 włącza Remote Control (widać ją w aplikacji Claude) i sama odnawia most po zmianie konta (`/login`).
 Dlatego budujemy ze źródeł, a nie z `npm install -g @getpaseo/cli`.
 
+Konto Claude na tym komputerze może być inne niż na VPS — to nie przeszkadza. Sesje uruchamiane tu przez
+Paseo używają konta zalogowanego w Claude Code na tej maszynie (jego limitów); Remote Control tych sesji
+widać w aplikacji Claude **tego** konta. Paseo (web UI na VPS, telefon) widzi je niezależnie od konta.
+Nie loguj się ponownie ani nie zmieniaj konta w ramach tej instrukcji.
+
 Nie zmieniaj niczego poza tym, co tu opisane. Każdy krok sprawdź, zanim przejdziesz dalej; błąd zgłoś
 właścicielowi dosłownie.
 
