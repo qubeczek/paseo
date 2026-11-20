@@ -19,11 +19,48 @@ właścicielowi dosłownie.
 
 ## 1. Wymagania
 
-- Node.js **22.20** lub nowszy z linii 22 (`node -v`). Starszy → zainstaluj 22 LTS (np. `winget install OpenJS.NodeJS.LTS`)
-  i otwórz nowy terminal.
+- Node.js **22.20** lub nowszy (`node -v`; sprawdzone na 22.x i 24.16). Starszy → zainstaluj 22 LTS
+  (np. `winget install OpenJS.NodeJS.LTS`) i otwórz nowy terminal. Nowszego nie zmieniaj.
 - Git (`git --version`).
-- Claude Code zainstalowany i zalogowany (`claude --version`).
+- Claude Code zainstalowany i zalogowany; `claude --version` musi wypisać `... (Claude Code)` — patrz 1a.
 - Wolne ~3 GB na dysku (zależności). Aplikacji desktop/mobile **nie budujemy**.
+
+## 1a. `claude` w PATH musi być Claude Code CLI, nie Claude Desktop
+
+Aplikacja **Claude Desktop** instaluje własny `claude.exe` (`%LOCALAPPDATA%\AnthropicClaude`). Jeśli jest w PATH
+przed CLI (`%USERPROFILE%\.local\bin`), `claude --version` wypisuje coś w stylu `5.11492.5` zamiast
+`2.x.y (Claude Code)`, a każda sesja uruchomiona przez Paseo kończy się błędem (`Unable to parse Claude Code
+version`, `Unable to move the cache: Odmowa dostępu`, `Claude stream ended before terminal result`).
+
+Sprawdź:
+
+```powershell
+Get-Command claude -All | ForEach-Object { "$($_.Source)  ->  $(& $_.Source --version)" }
+```
+
+Jeśli **pierwsza** linia nie kończy się na `(Claude Code)`, przesuń w PATH użytkownika katalog CLI przed
+`AnthropicClaude` (edycja surowej wartości z rejestru — zachowuje `%ZMIENNE%` i typ wartości; kopia zapasowa
+trafia do `%USERPROFILE%\path-user-backup.txt`):
+
+```powershell
+$k = [Microsoft.Win32.Registry]::CurrentUser.OpenSubKey('Environment', $true)
+$raw = $k.GetValue('Path', $null, 'DoNotExpandEnvironmentNames'); $kind = $k.GetValueKind('Path')
+Set-Content "$env:USERPROFILE\path-user-backup.txt" $raw -Encoding utf8
+$parts = [System.Collections.Generic.List[string]]($raw -split ';')
+$cli = $parts | Where-Object { $_ -match '\\\.local\\bin\\?$' } | Select-Object -First 1
+if ($cli) { [void]$parts.Remove($cli) }
+$i = $parts.FindIndex([Predicate[string]]{ param($x) $x -match 'AnthropicClaude\\?$' })
+if ($cli -and $i -ge 0) { $parts.Insert($i, $cli); $k.SetValue('Path', ($parts -join ';'), $kind) }
+$k.Close()
+[Environment]::SetEnvironmentVariable("PASEO_TMP", "1", "User"); [Environment]::SetEnvironmentVariable("PASEO_TMP", $null, "User")
+```
+
+(Dwie ostatnie linie tylko rozgłaszają zmianę środowiska do systemu.) Otwórz **nowy** terminal i powtórz
+sprawdzenie — pierwsza linia ma kończyć się na `(Claude Code)`. Jeśli `.local\bin` jest w PATH systemowym
+albo CLI leży gdzie indziej, nie kombinuj — zgłoś właścicielowi wynik sprawdzenia.
+
+Aktualizacja Claude Desktop może PATH znowu przestawić, dlatego w kroku 3a dodatkowo wpisujemy ścieżkę CLI
+na sztywno w konfiguracji Paseo.
 
 ## 2. Pobranie i build
 
@@ -52,18 +89,51 @@ node packages\cli\bin\paseo daemon status
 Daemon słucha tylko na `127.0.0.1:6767`, stan w `%USERPROFILE%\.paseo`. Web UI jest domyślnie wyłączone — nie
 włączaj go. Hasła nie ustawiamy: daemon nie jest wystawiony w sieci, a relay ma własne parowanie urządzeń.
 
-## 3a. Powiadomienia jak na VPS
+## 3a. Ścieżka do Claude Code CLI w konfiguracji Paseo
+
+Zabezpieczenie na wypadek, gdyby PATH znowu wskazał Claude Desktop (patrz 1a). Plik
+`%USERPROFILE%\.paseo\config.json` tworzy daemon przy pierwszym starcie (krok 3):
+
+```powershell
+$cli = Get-Command claude -All | Where-Object { "$(& $_.Source --version 2>$null)" -match 'Claude Code' } |
+  Select-Object -First 1 -ExpandProperty Source
+if (-not $cli) { throw "Nie znaleziono Claude Code CLI w PATH - zgłoś właścicielowi" }
+$cfgPath = "$env:USERPROFILE\.paseo\config.json"
+Copy-Item $cfgPath "$cfgPath.bak"
+$cfg = Get-Content $cfgPath -Raw | ConvertFrom-Json
+$claude = [pscustomobject]@{ command = [pscustomobject]@{ mode = "replace"; argv = @($cli) } }
+if (-not $cfg.agents) { $cfg | Add-Member agents ([pscustomobject]@{}) }
+if (-not $cfg.agents.providers) { $cfg.agents | Add-Member providers ([pscustomobject]@{}) }
+$cfg.agents.providers | Add-Member claude $claude -Force
+[IO.File]::WriteAllText($cfgPath, ($cfg | ConvertTo-Json -Depth 10))
+Get-Content $cfgPath
+```
+
+W wyniku ma być `agents.providers.claude.command.argv` = ścieżka do `...\.local\bin\claude.exe`.
+
+## 3b. Powiadomienia jak na VPS i restart
 
 Push na telefon tylko wtedy, gdy sesja czeka na zgodę albo stoi na błędzie dłużej niż 2 minuty (zakończone
-tury bez pusha). Zmienne użytkownika, potem restart daemona w nowym terminalu:
+tury bez pusha). Zmienne użytkownika:
 
 ```powershell
 [Environment]::SetEnvironmentVariable("PASEO_NOTIFY_REASONS", "permission,error", "User")
 [Environment]::SetEnvironmentVariable("PASEO_PUSH_DELAY_MS", "120000", "User")
 ```
 
-Otwórz nowy terminal (zmienne działają w nowych procesach) i:
-`node packages\cli\bin\paseo daemon restart`.
+Teraz **pełny** restart daemona — `stop` + `start`, nie `daemon restart`. `daemon restart` podmienia tylko
+proces workera, który dziedziczy środowisko starego supervisora, więc nowe zmienne by nie zadziałały. Zmienne
+ustawiamy też w bieżącym procesie, żeby nie zależeć od otwierania nowego terminala:
+
+```powershell
+$env:PASEO_NOTIFY_REASONS = "permission,error"
+$env:PASEO_PUSH_DELAY_MS = "120000"
+node packages\cli\bin\paseo daemon stop
+node packages\cli\bin\paseo daemon start
+node packages\cli\bin\paseo daemon status
+```
+
+W `status` provider `claude` ma `"available":true`.
 
 ## 4. Autostart po zalogowaniu
 
@@ -100,6 +170,9 @@ Oczekiwane: status `completed`; w `%USERPROFILE%\.paseo\daemon.log` linia `Claud
 z `remoteControlUrl`; sesja „test windows” widoczna w aplikacji Claude (nazwa sesji = tytuł w Paseo). Potem:
 `node packages\cli\bin\paseo archive <id>`.
 
+Status `error` z `Unable to parse Claude Code version` / `Unable to move the cache` w logu = Paseo uruchamia
+Claude Desktop zamiast CLI → wróć do 1a i 3a, potem pełny restart z 3b.
+
 ## 7. Raport dla właściciela
 
 Na koniec podaj właścicielowi krótko: nazwę komputera (`hostname`), wersję daemona, wynik testu z kroku 6
@@ -114,7 +187,8 @@ cd C:\projects\paseo
 git pull
 npm ci
 npm run build:server
-node packages\cli\bin\paseo daemon restart
+node packages\cli\bin\paseo daemon stop
+node packages\cli\bin\paseo daemon start
 ```
 
-Restart daemona kończy wszystkie sesje uruchomione przez Paseo na tym komputerze — rób go tylko w przerwie.
+Jeśli od instalacji aktualizował się Claude Desktop, najpierw powtórz sprawdzenie z 1a. Restart daemona kończy wszystkie sesje uruchomione przez Paseo na tym komputerze — rób go tylko w przerwie.
