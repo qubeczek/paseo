@@ -7,7 +7,9 @@ import type { Backlog } from "../shared/contracts";
 
 const ARTIFACTS = "docs/implementation-artifacts";
 const BMAD_CONFIG = "_bmad/bmm/config.yaml";
-const PM_QUEUE = ".claude/scripts/harness/pm_queue.py";
+// welthix: harness/pm_queue.py; aquila: scripts/pm/pm-queue.py (same --json contract)
+const PM_QUEUES = [".claude/scripts/harness/pm_queue.py", ".claude/scripts/pm/pm-queue.py"];
+const AQUILA_PM_STATE = ".claude/state/pm";
 const CONFIG = ".claude/scripts/harness/config.py";
 const CACHE_MS = 60_000;
 
@@ -158,9 +160,25 @@ async function readFlow(root: string, config: Record<string, string>, key: strin
   return null;
 }
 
-async function readPmLine(config: Record<string, string>): Promise<string | null> {
-  if (!config.state_dir) return null;
-  const text = await readText(path.join(expandHome(config.state_dir), "run-card.md"));
+/** Aquila keeps the PM card per machine in `.claude/state/pm/<symbol>/run-card.md`; take the newest one. */
+async function newestRunCard(root: string): Promise<string | null> {
+  const dir = path.join(root, AQUILA_PM_STATE);
+  const entries = await fs.readdir(dir, { withFileTypes: true }).catch(() => []);
+  let best: { file: string; mtime: number } | null = null;
+  for (const entry of entries.filter((e) => e.isDirectory())) {
+    const file = path.join(dir, entry.name, "run-card.md");
+    const stat = await fs.stat(file).catch(() => null);
+    if (stat && (!best || stat.mtimeMs > best.mtime)) best = { file, mtime: stat.mtimeMs };
+  }
+  return best?.file ?? null;
+}
+
+async function readPmLine(root: string, config: Record<string, string>): Promise<string | null> {
+  const card = config.state_dir
+    ? path.join(expandHome(config.state_dir), "run-card.md")
+    : await newestRunCard(root);
+  if (!card) return null;
+  const text = await readText(card);
   const match = text && /^Aktualizacja:\s*(.+)$/m.exec(text);
   if (!match) return null;
   const line = match[1];
@@ -221,6 +239,22 @@ interface PmQueue {
     reasons?: string[];
     feature?: string;
   }[];
+}
+
+/** The project's PM queue script (`--json`), if it has one; errors go to the backlog card. */
+async function readPmQueue(root: string, errors: string[]): Promise<PmQueue | null> {
+  for (const script of PM_QUEUES) {
+    if (!(await exists(path.join(root, script)))) continue;
+    try {
+      return JSON.parse(await python([script, "--json"], root)) as PmQueue;
+    } catch (error) {
+      errors.push(
+        `pm_queue: ${error instanceof Error ? error.message.split("\n")[0] : String(error)}`,
+      );
+      return null;
+    }
+  }
+  return null;
 }
 
 /** `implementation_artifacts: "{project-root}/docs/..."` (or `planning_artifacts`) in BMAD's config. */
@@ -291,16 +325,7 @@ async function readBacklog(root: string): Promise<Backlog | null> {
   const titles = epicsText ? parseEpicTitles(epicsText) : new Map<string, string>();
   const title = (short: string) => titles.get(short.toLowerCase()) ?? null;
 
-  let pm: PmQueue | null = null;
-  if (await exists(path.join(root, PM_QUEUE))) {
-    try {
-      pm = JSON.parse(await python([PM_QUEUE, "--json"], root)) as PmQueue;
-    } catch (error) {
-      errors.push(
-        `pm_queue: ${error instanceof Error ? error.message.split("\n")[0] : String(error)}`,
-      );
-    }
-  }
+  const pm = await readPmQueue(root, errors);
 
   const inProgressKeys = pm?.in_progress ?? (await inProgressFromFiles(root, config, statuses));
   const inProgress = await Promise.all(
@@ -338,7 +363,7 @@ async function readBacklog(root: string): Promise<Backlog | null> {
     counts,
     inProgress,
     queue,
-    pm: await readPmLine(config),
+    pm: await readPmLine(root, config),
     error: errors.length > 0 ? errors.join("; ") : null,
     readAt: new Date().toISOString(),
   };
