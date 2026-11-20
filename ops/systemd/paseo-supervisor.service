@@ -1,0 +1,12 @@
+[Unit]
+Description=Paseo: zapewnij sesję supervisor po starcie daemona
+After=paseo-daemon.service
+PartOf=paseo-daemon.service
+
+[Service]
+Type=oneshot
+Environment=PATH=/home/kuba/.local/share/node/bin:/home/kuba/.local/bin:/usr/local/bin:/usr/bin:/bin
+ExecStart=/home/kuba/projects/paseo/supervisor/ensure-supervisor.sh
+
+[Install]
+WantedBy=paseo-daemon.service

@@ -1,0 +1,8 @@
+{
+  "id": "supervisor-rola",
+  "name": "Rola supervisor",
+  "media": [],
+  "requirements": {
+    "paseo": ">=0.16.2"
+  }
+}

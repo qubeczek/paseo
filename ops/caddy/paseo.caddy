@@ -1,0 +1,11 @@
+# Paseo daemon + wbudowane web UI (paseo-daemon.service, 127.0.0.1:6767). Dostęp chroni hasło daemona
+# (hash w ~/.paseo/config.json). Tymczasowa nazwa sslip.io.
+paseo.57-128-254-242.sslip.io {
+	encode zstd gzip
+	request_body {
+		max_size 100MB
+	}
+	reverse_proxy 127.0.0.1:6767 {
+		flush_interval -1
+	}
+}

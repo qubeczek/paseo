@@ -1,0 +1,20 @@
+[Unit]
+Description=Paseo daemon (ze źródeł ~/projects/paseo/src, stan ~/.paseo, 127.0.0.1:6767)
+StartLimitIntervalSec=300
+StartLimitBurst=5
+
+[Service]
+Type=simple
+WorkingDirectory=/home/kuba/projects/paseo/src
+Environment=PATH=/home/kuba/.local/share/node/bin:/home/kuba/.local/bin:/usr/local/bin:/usr/bin:/bin
+Environment=PASEO_HOME=/home/kuba/.paseo
+Environment=PASEO_NOTIFY_REASONS=permission,error
+Environment=PASEO_PUSH_DELAY_MS=120000
+Environment=PASEO_CLAUDE_HOLD=1
+ExecStart=/home/kuba/.local/share/node/bin/npm run start
+KillMode=mixed
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=default.target
