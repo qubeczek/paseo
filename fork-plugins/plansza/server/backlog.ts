@@ -15,14 +15,19 @@ const cache = new Map<string, { at: number; value: Backlog | null }>();
 
 function run(cmd: string, args: string[], cwd: string, timeout = 45_000): Promise<string> {
   return new Promise((resolve, reject) => {
-    execFile(cmd, args, { cwd, timeout, maxBuffer: 8 << 20, encoding: "utf8" }, (error, stdout) =>
-      error ? reject(error) : resolve(stdout),
-    );
+    execFile(cmd, args, { cwd, timeout, maxBuffer: 8 << 20, encoding: "utf8" }, (error, stdout) => {
+      if (error) {
+        reject(error);
+        return;
+      }
+      resolve(stdout);
+    });
   });
 }
 
 async function python(args: string[], cwd: string): Promise<string> {
-  const candidates = process.platform === "win32" ? ["python", "py", "python3"] : ["python3", "python"];
+  const candidates =
+    process.platform === "win32" ? ["python", "py", "python3"] : ["python3", "python"];
   let last: unknown;
   for (const cmd of candidates) {
     try {
@@ -103,7 +108,14 @@ function currentPhase(phases: ReturnType<typeof parsePhases>) {
 }
 
 async function harnessConfig(root: string): Promise<Record<string, string>> {
-  const keys = ["worktree_root", "flow_file_path", "state_dir", "epics", "sprint_status", "implementation_artifacts"];
+  const keys = [
+    "worktree_root",
+    "flow_file_path",
+    "state_dir",
+    "epics",
+    "sprint_status",
+    "implementation_artifacts",
+  ];
   const values: Record<string, string> = {};
   if (!(await exists(path.join(root, CONFIG)))) return values;
   await Promise.all(
@@ -123,12 +135,23 @@ function expandHome(value: string): string {
 }
 
 async function readFlow(root: string, config: Record<string, string>, key: string, short: string) {
-  const relative = (config.flow_file_path || `${config.implementation_artifacts || ARTIFACTS}/{story_key}/{story_short}-flow.md`)
+  const relative = (
+    config.flow_file_path ||
+    `${config.implementation_artifacts || ARTIFACTS}/{story_key}/{story_short}-flow.md`
+  )
     .replaceAll("{story_key}", key)
     .replaceAll("{story_short}", short);
-  const worktreeRoot = path.resolve(root, expandHome(config.worktree_root || `../${path.basename(root)}-wt`));
-  // A story in progress lives in its worktree; after the merge its flow file is on the main checkout.
-  for (const base of [path.join(worktreeRoot, short), root]) {
+  const worktreeRoot = path.resolve(
+    root,
+    expandHome(config.worktree_root || `../${path.basename(root)}-wt`),
+  );
+  // A story in progress lives in its worktree (welthix: `<short>`, aquila: `story-<short>`);
+  // after the merge its flow file is on the main checkout.
+  for (const base of [
+    path.join(worktreeRoot, short),
+    path.join(worktreeRoot, `story-${short}`),
+    root,
+  ]) {
     const text = await readText(path.join(base, relative));
     if (text) return parsePhases(text);
   }
@@ -147,41 +170,106 @@ async function readPmLine(config: Record<string, string>): Promise<string | null
   return [stamp, mode && `tryb ${mode}`, slots && `sloty ${slots}`].filter(Boolean).join(" · ");
 }
 
-interface PmQueue {
-  in_progress?: string[];
-  queue?: { key: string; short?: string; admissible?: boolean; reasons?: string[]; feature?: string }[];
+/**
+ * Story keys from `<worktree_root>/*\/_worktree.json` markers. Aquila marks a story in progress this way and keeps
+ * its sprint-status entry at `backlog` until the merge.
+ */
+async function worktreeStories(root: string, config: Record<string, string>): Promise<string[]> {
+  const worktreeRoot = path.resolve(
+    root,
+    expandHome(config.worktree_root || `../${path.basename(root)}-wt`),
+  );
+  const entries = await fs.readdir(worktreeRoot, { withFileTypes: true }).catch(() => []);
+  const keys = await Promise.all(
+    entries
+      .filter((entry) => entry.isDirectory())
+      .map(async (entry) => {
+        const text = await readText(path.join(worktreeRoot, entry.name, "_worktree.json"));
+        if (!text) return null;
+        try {
+          const marker = JSON.parse(text.replace(/^﻿/, "")) as { story_key?: unknown };
+          return typeof marker.story_key === "string" ? marker.story_key : null;
+        } catch {
+          return null;
+        }
+      }),
+  );
+  return keys.filter((key): key is string => key !== null);
 }
 
-/** `implementation_artifacts: "{project-root}/docs/..."` in BMAD's config. */
-async function bmadArtifacts(root: string): Promise<string | null> {
+/** Without a PM queue: `in-progress` in the sprint file, plus stories with a live worktree marker. */
+async function inProgressFromFiles(
+  root: string,
+  config: Record<string, string>,
+  statuses: Map<string, string>,
+): Promise<string[]> {
+  const fromSprint = [...statuses]
+    .filter(([, status]) => status === "in-progress")
+    .map(([key]) => key);
+  const fromWorktrees = (await worktreeStories(root, config)).filter(
+    (key) => statuses.has(key) && statuses.get(key) !== "done",
+  );
+  return [...new Set([...fromSprint, ...fromWorktrees])];
+}
+
+interface PmQueue {
+  in_progress?: string[];
+  queue?: {
+    key: string;
+    short?: string;
+    admissible?: boolean;
+    reasons?: string[];
+    feature?: string;
+  }[];
+}
+
+/** `implementation_artifacts: "{project-root}/docs/..."` (or `planning_artifacts`) in BMAD's config. */
+async function bmadArtifacts(
+  root: string,
+  key: "implementation_artifacts" | "planning_artifacts" = "implementation_artifacts",
+): Promise<string | null> {
   const text = await readText(path.join(root, BMAD_CONFIG));
   if (!text) return null;
-  const value = (key: string) =>
-    new RegExp(`^${key}:\\s*["']?([^"'\\r\\n#]+?)["']?\\s*(?:#.*)?$`, "m").exec(text)?.[1] ?? null;
-  const artifacts = value("implementation_artifacts");
+  const value = (name: string) =>
+    new RegExp(`^${name}:\\s*["']?([^"'\\r\\n#]+?)["']?\\s*(?:#.*)?$`, "m").exec(text)?.[1] ?? null;
+  const artifacts = value(key);
   if (!artifacts) return null;
   const resolved = artifacts
-    .replaceAll("{output_folder}", (value("output_folder") ?? "docs").replace(/^\{project-root\}[\\/]?/, ""))
+    .replaceAll(
+      "{output_folder}",
+      (value("output_folder") ?? "docs").replace(/^\{project-root\}[\\/]?/, ""),
+    )
     .replace(/^\{project-root\}[\\/]?/, "");
   return resolved.includes("{") ? null : resolved;
+}
+
+/** The first sprint-status.yaml found, and the paths tried (for the "not found" message). */
+async function readSprint(root: string, config: Record<string, string>) {
+  const tried = [
+    ...new Set(
+      [
+        config.sprint_status,
+        config.implementation_artifacts &&
+          path.join(config.implementation_artifacts, "sprint-status.yaml"),
+        path.join(ARTIFACTS, "sprint-status.yaml"),
+      ].filter((file): file is string => !!file),
+    ),
+  ];
+  for (const file of tried) {
+    const text = await readText(path.resolve(root, expandHome(file)));
+    if (text !== null) return { text, tried };
+  }
+  return { text: null, tried };
 }
 
 async function readBacklog(root: string): Promise<Backlog | null> {
   const config = await harnessConfig(root);
   config.implementation_artifacts ||= (await bmadArtifacts(root)) ?? "";
-  const tried = [
-    config.sprint_status,
-    config.implementation_artifacts && path.join(config.implementation_artifacts, "sprint-status.yaml"),
-    path.join(ARTIFACTS, "sprint-status.yaml"),
-  ].filter((file): file is string => !!file);
-  let sprintText: string | null = null;
-  for (const file of [...new Set(tried)]) {
-    sprintText = await readText(path.resolve(root, expandHome(file)));
-    if (sprintText !== null) break;
-  }
+  const { text: sprintText, tried } = await readSprint(root, config);
   if (sprintText === null) {
     // A BMAD project without a sprint file says so; any other project has no backlog at all.
-    const bmad = (await exists(path.join(root, BMAD_CONFIG))) || (await exists(path.join(root, CONFIG)));
+    const bmad =
+      (await exists(path.join(root, BMAD_CONFIG))) || (await exists(path.join(root, CONFIG)));
     if (!bmad) return null;
     return {
       root,
@@ -189,7 +277,7 @@ async function readBacklog(root: string): Promise<Backlog | null> {
       inProgress: [],
       queue: null,
       pm: null,
-      error: `Nie znalazłem sprint-status.yaml (szukałem: ${[...new Set(tried)].join(", ")})`,
+      error: `Nie znalazłem sprint-status.yaml (szukałem: ${tried.join(", ")})`,
       readAt: new Date().toISOString(),
     };
   }
@@ -198,7 +286,8 @@ async function readBacklog(root: string): Promise<Backlog | null> {
   for (const status of statuses.values()) counts[status] = (counts[status] ?? 0) + 1;
 
   const errors: string[] = [];
-  const epicsText = await readText(path.join(root, config.epics || "docs/planning-artifacts/epics.md"));
+  const planning = (await bmadArtifacts(root, "planning_artifacts")) ?? "docs/planning-artifacts";
+  const epicsText = await readText(path.join(root, config.epics || `${planning}/epics.md`));
   const titles = epicsText ? parseEpicTitles(epicsText) : new Map<string, string>();
   const title = (short: string) => titles.get(short.toLowerCase()) ?? null;
 
@@ -207,12 +296,13 @@ async function readBacklog(root: string): Promise<Backlog | null> {
     try {
       pm = JSON.parse(await python([PM_QUEUE, "--json"], root)) as PmQueue;
     } catch (error) {
-      errors.push(`pm_queue: ${error instanceof Error ? error.message.split("\n")[0] : String(error)}`);
+      errors.push(
+        `pm_queue: ${error instanceof Error ? error.message.split("\n")[0] : String(error)}`,
+      );
     }
   }
 
-  const inProgressKeys =
-    pm?.in_progress ?? [...statuses].filter(([, status]) => status === "in-progress").map(([key]) => key);
+  const inProgressKeys = pm?.in_progress ?? (await inProgressFromFiles(root, config, statuses));
   const inProgress = await Promise.all(
     inProgressKeys.map(async (key) => {
       const short = shortKey(key);
@@ -222,7 +312,9 @@ async function readBacklog(root: string): Promise<Backlog | null> {
         short,
         title: title(short),
         phase: phases ? currentPhase(phases) : null,
-        done: phases ? phases.filter((phase) => phase.status === "DONE" || phase.status === "SKIPPED").length : 0,
+        done: phases
+          ? phases.filter((phase) => phase.status === "DONE" || phase.status === "SKIPPED").length
+          : 0,
         total: phases ? phases.length : 0,
       };
     }),
