@@ -915,6 +915,7 @@ it("binds imported getters to each originating installation across delayed callb
     hosts: {
       getSnapshot: () => [],
       subscribe: () => () => {},
+      invokePluginRpc: () => Promise.reject(new Error("not used")),
       getPaseoClient(serverId) {
         calls.push(`${installation}/${serverId}`);
         return runtime.paseo;

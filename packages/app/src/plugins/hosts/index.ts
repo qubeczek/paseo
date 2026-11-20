@@ -74,6 +74,10 @@ export function createPluginHosts(source: PluginHostsSource, signal: AbortSignal
         listeners.delete(listener);
       };
     },
+    /** Fork: call this plugin's RPC on another online host that has the same plugin installed. */
+    invokePluginRpc(serverId: string, pluginId: string, method: string, input: unknown): Promise<unknown> {
+      return resolve(serverId).invokePluginRpc(pluginId, method, input);
+    },
     getPaseoClient(serverId: string): PaseoApi {
       const client = resolve(serverId);
       const existing = clients.get(serverId);

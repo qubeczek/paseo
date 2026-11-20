@@ -5,7 +5,8 @@ import os from "node:os";
 import path from "node:path";
 import type { Backlog } from "../shared/contracts";
 
-const SPRINT_STATUS = "docs/implementation-artifacts/sprint-status.yaml";
+const ARTIFACTS = "docs/implementation-artifacts";
+const BMAD_CONFIG = "_bmad/bmm/config.yaml";
 const PM_QUEUE = ".claude/scripts/harness/pm_queue.py";
 const CONFIG = ".claude/scripts/harness/config.py";
 const CACHE_MS = 60_000;
@@ -102,7 +103,7 @@ function currentPhase(phases: ReturnType<typeof parsePhases>) {
 }
 
 async function harnessConfig(root: string): Promise<Record<string, string>> {
-  const keys = ["worktree_root", "flow_file_path", "state_dir", "epics"];
+  const keys = ["worktree_root", "flow_file_path", "state_dir", "epics", "sprint_status", "implementation_artifacts"];
   const values: Record<string, string> = {};
   if (!(await exists(path.join(root, CONFIG)))) return values;
   await Promise.all(
@@ -122,7 +123,7 @@ function expandHome(value: string): string {
 }
 
 async function readFlow(root: string, config: Record<string, string>, key: string, short: string) {
-  const relative = (config.flow_file_path || "docs/implementation-artifacts/{story_key}/{story_short}-flow.md")
+  const relative = (config.flow_file_path || `${config.implementation_artifacts || ARTIFACTS}/{story_key}/{story_short}-flow.md`)
     .replaceAll("{story_key}", key)
     .replaceAll("{story_short}", short);
   const worktreeRoot = path.resolve(root, expandHome(config.worktree_root || `../${path.basename(root)}-wt`));
@@ -151,15 +152,52 @@ interface PmQueue {
   queue?: { key: string; short?: string; admissible?: boolean; reasons?: string[]; feature?: string }[];
 }
 
+/** `implementation_artifacts: "{project-root}/docs/..."` in BMAD's config. */
+async function bmadArtifacts(root: string): Promise<string | null> {
+  const text = await readText(path.join(root, BMAD_CONFIG));
+  if (!text) return null;
+  const value = (key: string) =>
+    new RegExp(`^${key}:\\s*["']?([^"'\\r\\n#]+?)["']?\\s*(?:#.*)?$`, "m").exec(text)?.[1] ?? null;
+  const artifacts = value("implementation_artifacts");
+  if (!artifacts) return null;
+  const resolved = artifacts
+    .replaceAll("{output_folder}", (value("output_folder") ?? "docs").replace(/^\{project-root\}[\\/]?/, ""))
+    .replace(/^\{project-root\}[\\/]?/, "");
+  return resolved.includes("{") ? null : resolved;
+}
+
 async function readBacklog(root: string): Promise<Backlog | null> {
-  const sprintText = await readText(path.join(root, SPRINT_STATUS));
-  if (sprintText === null) return null;
+  const config = await harnessConfig(root);
+  config.implementation_artifacts ||= (await bmadArtifacts(root)) ?? "";
+  const tried = [
+    config.sprint_status,
+    config.implementation_artifacts && path.join(config.implementation_artifacts, "sprint-status.yaml"),
+    path.join(ARTIFACTS, "sprint-status.yaml"),
+  ].filter((file): file is string => !!file);
+  let sprintText: string | null = null;
+  for (const file of [...new Set(tried)]) {
+    sprintText = await readText(path.resolve(root, expandHome(file)));
+    if (sprintText !== null) break;
+  }
+  if (sprintText === null) {
+    // A BMAD project without a sprint file says so; any other project has no backlog at all.
+    const bmad = (await exists(path.join(root, BMAD_CONFIG))) || (await exists(path.join(root, CONFIG)));
+    if (!bmad) return null;
+    return {
+      root,
+      counts: {},
+      inProgress: [],
+      queue: null,
+      pm: null,
+      error: `Nie znalazłem sprint-status.yaml (szukałem: ${[...new Set(tried)].join(", ")})`,
+      readAt: new Date().toISOString(),
+    };
+  }
   const statuses = parseSprintStatus(sprintText);
   const counts: Record<string, number> = {};
   for (const status of statuses.values()) counts[status] = (counts[status] ?? 0) + 1;
 
   const errors: string[] = [];
-  const config = await harnessConfig(root);
   const epicsText = await readText(path.join(root, config.epics || "docs/planning-artifacts/epics.md"));
   const titles = epicsText ? parseEpicTitles(epicsText) : new Map<string, string>();
   const title = (short: string) => titles.get(short.toLowerCase()) ?? null;

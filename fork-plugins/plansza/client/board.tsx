@@ -1,5 +1,6 @@
 import { useQuery } from "@tanstack/react-query";
 import type { PluginAgentSnapshot } from "@getpaseo/plugin";
+import * as pluginClient from "@getpaseo/plugin/client";
 import {
   useAgent,
   useAgents,
@@ -53,33 +54,70 @@ function tint(color: string, alpha: number): string {
 
 // ---------------------------------------------------------------- data
 
+/** Fork-built apps (web GUI from qubeczek/paseo) can call the plugin on every host; app 0.16/0.17 cannot. */
+type BoardStatusOutput = import("zod").output<(typeof boardStatus)["output"]>;
+type CallHostRpc = (serverId: string, contract: typeof boardStatus, input: { roots: string[] }) => Promise<BoardStatusOutput>;
+const callHostRpc = (pluginClient as { callHostRpc?: CallHostRpc }).callHostRpc;
+export const ALL_HOSTS = typeof callHostRpc === "function";
+/** Host key when only the selected host answers and the surface does not say which one it is. */
+const SELECTED = "*";
+
 interface BoardData {
+  /** `host|agentId` → resetAt. */
   paused: Map<string, number | null>;
+  /** `host|root` → backlog. */
   backlogs: Map<string, Backlog>;
-  hostId: string | null;
+  /** Hosts that did not answer (offline, plugin missing). */
+  failed: string[];
 }
 
-function useBoardData(props: Props, roots: string[]): BoardData {
+const at = (hostId: string, value: string) => `${hostId}|${value}`;
+
+/** Asks every host (fork app) or the selected one for backlogs of its project roots and its paused sessions. */
+function useBoardData(props: Props, request: Record<string, string[]>): BoardData {
   const status = useRpc(boardStatus);
+  const hosts = useHosts();
+  const online = hosts.filter((h) => h.status === "online").map((h) => h.serverId);
+  const key = JSON.stringify([ALL_HOSTS ? online : [props.hostId], request]);
   const query = useQuery({
-    queryKey: ["board.status", roots.join("\n")],
-    queryFn: () => status({ roots }),
+    queryKey: ["board.status", key],
+    queryFn: async () => {
+      if (!callHostRpc) {
+        const hostId = props.hostId ?? SELECTED;
+        return [{ hostId, result: await status({ roots: request[hostId] ?? [] }) }];
+      }
+      return Promise.all(
+        online.map(async (hostId) => ({
+          hostId,
+          result: await callHostRpc(hostId, boardStatus, { roots: request[hostId] ?? [] }).catch(() => null),
+        })),
+      );
+    },
     refetchInterval: 60_000,
     staleTime: 30_000,
   });
   return useMemo(() => {
     const paused = new Map<string, number | null>();
-    for (const entry of query.data?.paused ?? []) paused.set(entry.agentId, entry.resetAt);
     const backlogs = new Map<string, Backlog>();
-    for (const backlog of query.data?.backlogs ?? []) backlogs.set(backlog.root, backlog);
-    return { paused, backlogs, hostId: props.hostId };
-  }, [query.data, props.hostId]);
+    const failed: string[] = [];
+    for (const { hostId, result } of query.data ?? []) {
+      if (!result) {
+        failed.push(hostId);
+        continue;
+      }
+      for (const entry of result.paused) paused.set(at(hostId, entry.agentId), entry.resetAt);
+      for (const backlog of result.backlogs) backlogs.set(at(hostId, backlog.root), backlog);
+    }
+    return { paused, backlogs, failed };
+  }, [query.data]);
 }
 
-/** Paused entries belong to the plugin's host; agents elsewhere are never paused by it. */
+/** Paused entries come from wznawianie on the agent's own host. */
 function pausedFor(agent: PluginAgentSnapshot, data: BoardData): number | null | undefined {
-  if ((data.hostId !== null && agent.hostId !== data.hostId) || !data.paused.has(agent.id)) return undefined;
-  return data.paused.get(agent.id) ?? null;
+  for (const key of [at(agent.hostId, agent.id), at(SELECTED, agent.id)]) {
+    if (data.paused.has(key)) return data.paused.get(key) ?? null;
+  }
+  return undefined;
 }
 
 const stateOf = (agent: PluginAgentSnapshot, data: BoardData) => sessionState(agent, pausedFor(agent, data));
@@ -653,12 +691,14 @@ export function Board(props: Props) {
       current[name]?.[hostId] === root ? current : { ...current, [name]: { ...current[name], [hostId]: root } },
     );
   }, []);
-  // The backlog is read by the plugin on the host that answers the RPC, so only that host's paths count
-  // (a sidebar view does not know that host: it asks for every path and keeps what the host could read).
+  // Each host's plugin reads the backlog from its own disk. Without the fork app only the selected host answers
+  // (a sidebar view does not know which one: it asks for every path and keeps what that host could read).
   const candidates = useMemo(() => {
-    const result: Record<string, string[]> = {};
+    const result: Record<string, { hostId: string; root: string }[]> = {};
     for (const [name, byHost] of Object.entries(paths)) {
-      const list = props.hostId === null ? Object.values(byHost) : byHost[props.hostId] ? [byHost[props.hostId]] : [];
+      const list = Object.entries(byHost)
+        .filter(([hostId]) => ALL_HOSTS || props.hostId === null || hostId === props.hostId)
+        .map(([hostId, root]) => ({ hostId: ALL_HOSTS ? hostId : (props.hostId ?? SELECTED), root }));
       if (list.length > 0) result[name] = list;
     }
     return result;
@@ -668,14 +708,23 @@ export function Board(props: Props) {
     setCounts((current) => ({ ...current, [name]: next }));
   }, []);
 
-  const backlogRoots = useMemo(
-    () => [...new Set(Object.entries(candidates).filter(([name]) => !layout.noBacklog.includes(name)).flatMap(([, list]) => list))].sort(),
-    [candidates, layout.noBacklog],
-  );
-  const data = useBoardData(props, backlogRoots);
+  const request = useMemo(() => {
+    const result: Record<string, string[]> = {};
+    for (const [name, list] of Object.entries(candidates)) {
+      if (layout.noBacklog.includes(name)) continue;
+      for (const { hostId, root } of list) result[hostId] = [...new Set([...(result[hostId] ?? []), root])].sort();
+    }
+    return result;
+  }, [candidates, layout.noBacklog]);
+  const data = useBoardData(props, request);
   const roots: Record<string, string> = {};
-  for (const [name, list] of Object.entries(candidates)) roots[name] = list.find((root) => data.backlogs.has(root)) ?? list[0];
-  const backlogOf = (name: string) => (roots[name] && !layout.noBacklog.includes(name) ? (data.backlogs.get(roots[name]) ?? null) : null);
+  const backlogByName: Record<string, Backlog> = {};
+  for (const [name, list] of Object.entries(candidates)) {
+    const found = list.find(({ hostId, root }) => data.backlogs.has(at(hostId, root)));
+    roots[name] = (found ?? list[0]).root;
+    if (found) backlogByName[name] = data.backlogs.get(at(found.hostId, found.root))!;
+  }
+  const backlogOf = (name: string) => (!layout.noBacklog.includes(name) ? (backlogByName[name] ?? null) : null);
 
   const reporters = (
     <>
@@ -695,7 +744,7 @@ export function Board(props: Props) {
         <LayoutEditor
           names={groups.map((g) => g.name)}
           paths={paths}
-          withBacklog={new Set(Object.keys(roots).filter((name) => data.backlogs.has(roots[name]) || layout.noBacklog.includes(name)))}
+          withBacklog={new Set(Object.keys(roots).filter((name) => !!backlogByName[name] || layout.noBacklog.includes(name)))}
           styles={styles}
           onDone={() => setEditing(false)}
         />

@@ -589,6 +589,15 @@ export function runPluginClientBundle(
           useSettings(definition, id),
         openExternalUrl,
         getPaseoClient: (serverId: string) => runtime.hosts.getPaseoClient(serverId),
+        // Fork: one surface can read every host (e.g. one board for all computers).
+        callHostRpc: (
+          serverId: string,
+          contract: import("@getpaseo/plugin").PluginRpcContract,
+          input: unknown,
+        ) =>
+          runtime.hosts
+            .invokePluginRpc(serverId, id, contract.name, input)
+            .then((output) => contract.output.parseAsync(output)),
         useHosts: () =>
           React.useSyncExternalStore(
             runtime.hosts.subscribe,

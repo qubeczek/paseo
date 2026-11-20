@@ -122,6 +122,17 @@ export interface PluginHostSummary {
 export declare function useHosts(): readonly PluginHostSummary[];
 /** Borrow an online host's API under this installation's lifetime. */
 export declare function getPaseoClient(serverId: string): import("@getpaseo/client").PaseoApi;
+/**
+ * Fork (qubeczek/paseo): call this plugin's RPC on a given host (the same plugin must be installed there).
+ * Missing in apps built without the fork, so check that it is defined before calling it.
+ */
+export declare const callHostRpc:
+  | (<InputSchema extends ZodType, OutputSchema extends ZodType>(
+      serverId: string,
+      contract: import("../rpc.js").PluginRpcContract<InputSchema, OutputSchema>,
+      input: import("../rpc.js").PluginWireInput<import("zod").input<InputSchema>>,
+    ) => Promise<import("zod").output<OutputSchema>>)
+  | undefined;
 /** Open an absolute HTTP(S) URL using the client platform’s external opener. */
 export declare function openExternalUrl(url: string): Promise<void>;
 
