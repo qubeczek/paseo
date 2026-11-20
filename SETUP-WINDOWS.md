@@ -158,6 +158,11 @@ Polecenie włącza relay i wypisuje kod QR oraz **link parowania** (`https://app
 Przekaż właścicielowi **link** — on wklei go w web UI na VPS i w telefonie (**Add host → Paste pairing link**).
 Link daje dostęp do sesji na tym komputerze: przekaż go tylko właścicielowi, nie wpisuj do plików w repo.
 
+## 5a. Pluginy forka
+
+Zainstaluj pluginy według [fork-plugins/README.md](fork-plugins/README.md). Na świeżym daemonie pluginy są
+globalnie wyłączone — bez kroku 2 z tamtej instrukcji `plugin ls` pokaże `STATUS disabled`.
+
 ## 6. Sprawdzenie
 
 Uruchom krótką sesję testową przez Paseo w dowolnym katalogu roboczym:
