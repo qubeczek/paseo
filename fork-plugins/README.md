@@ -25,9 +25,9 @@ Z korzenia repo, po `git pull`. Polecenia działają w bash i w PowerShell.
    cd ../..
    ```
 
-2. Włącz pluginy w daemonie. Na świeżym daemonie główny przełącznik `pluginsEnabled` jest wyłączony: `plugin
-install` przechodzi, ale `plugin ls` pokazuje `STATUS disabled` przy `ENABLED yes`. CLI nie ma na to polecenia,
-   więc użyj skryptu (zmiana działa od razu, bez restartu daemona, i zostaje zapisana w `config.json`):
+2. Włącz pluginy w daemonie. Na świeżym daemonie główny przełącznik `pluginsEnabled` jest wyłączony:
+   instalacja przechodzi, ale `plugin ls` pokazuje `STATUS disabled` przy `ENABLED yes`. CLI nie ma na to
+   polecenia, więc użyj skryptu (zmiana działa od razu, bez restartu daemona, i zostaje zapisana w `config.json`):
 
    ```
    node fork-plugins/enable-plugins.mjs
