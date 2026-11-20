@@ -1,6 +1,5 @@
 import { useQuery } from "@tanstack/react-query";
 import type { PluginAgentSnapshot } from "@getpaseo/plugin";
-import * as pluginClient from "@getpaseo/plugin/client";
 import {
   useAgent,
   useAgents,
@@ -16,6 +15,7 @@ import {
 import { useCallback, useEffect, useMemo, useState, type ReactNode } from "react";
 import { Linking, Pressable, ScrollView, Text, View } from "react-native";
 import { boardStatus, layoutSettings, type Backlog, type Layout } from "../shared/contracts";
+import { ALL_HOSTS, callHostRpc } from "./hosts";
 import { LayoutEditor } from "./layout-editor";
 import { projectKey, sessionState, shortPath, since, stateColor, storyOf, type SessionState, type StateKind } from "./status";
 
@@ -54,11 +54,6 @@ function tint(color: string, alpha: number): string {
 
 // ---------------------------------------------------------------- data
 
-/** Fork-built apps (web GUI from qubeczek/paseo) can call the plugin on every host; app 0.16/0.17 cannot. */
-type BoardStatusOutput = import("zod").output<(typeof boardStatus)["output"]>;
-type CallHostRpc = (serverId: string, contract: typeof boardStatus, input: { roots: string[] }) => Promise<BoardStatusOutput>;
-const callHostRpc = (pluginClient as { callHostRpc?: CallHostRpc }).callHostRpc;
-export const ALL_HOSTS = typeof callHostRpc === "function";
 /** Host key when only the selected host answers and the surface does not say which one it is. */
 const SELECTED = "*";
 
@@ -82,14 +77,15 @@ function useBoardData(props: Props, request: Record<string, string[]>): BoardDat
   const query = useQuery({
     queryKey: ["board.status", key],
     queryFn: async () => {
-      if (!callHostRpc) {
+      const call = callHostRpc;
+      if (!call) {
         const hostId = props.hostId ?? SELECTED;
         return [{ hostId, result: await status({ roots: request[hostId] ?? [] }) }];
       }
       return Promise.all(
         online.map(async (hostId) => ({
           hostId,
-          result: await callHostRpc(hostId, boardStatus, { roots: request[hostId] ?? [] }).catch(() => null),
+          result: await call(hostId, boardStatus, { roots: request[hostId] ?? [] }).catch(() => null),
         })),
       );
     },

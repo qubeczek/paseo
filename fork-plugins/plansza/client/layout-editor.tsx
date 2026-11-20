@@ -1,5 +1,7 @@
 import { useHosts, useSettings } from "@getpaseo/plugin/client";
+import { settingsRpc } from "@getpaseo/plugin";
 import { useCallback } from "react";
+import { callHostRpc } from "./hosts";
 import { Pressable, Text, View } from "react-native";
 import { layoutSettings, type Layout, type ProjectKind } from "../shared/contracts";
 import type { ProjectPaths, Styles } from "./board";
@@ -28,11 +30,25 @@ export function LayoutEditor({ names, paths, withBacklog, styles, onDone }: { na
   const hosts = useHosts();
   const hostLabel = (id: string) => hosts.find((h) => h.serverId === id)?.label ?? id;
   const layout: Layout | null = settings.status === "ready" ? settings.values : null;
+  // One board for every computer: the layout is saved on the selected host and copied to the other online ones
+  // (fork web GUI), so whichever host a client reads it from (the phone reads the selected one) it is the same.
   const save = useCallback(
     (next: Layout) => {
-      if (settings.status === "ready") void settings.save(next, settings.revision);
+      if (settings.status !== "ready") return;
+      const call = callHostRpc;
+      const online = hosts.filter((host) => host.status === "online");
+      // Copies start after the selected host saved, so they never race its revision.
+      void settings.save(next, settings.revision).then(() => {
+        if (!call) return;
+        const rpc = settingsRpc(layoutSettings.id);
+        for (const host of online) {
+          void call(host.serverId, rpc.read, {})
+            .then((current) => call(host.serverId, rpc.write, { revision: current.revision, values: next }))
+            .catch(() => undefined);
+        }
+      });
     },
-    [settings],
+    [settings, hosts],
   );
   if (!layout) {
     return <Text style={styles.muted}>{settings.status === "loading" ? "Wczytuję układ…" : `Układ niedostępny: ${"error" in settings ? settings.error : ""}`}</Text>;
