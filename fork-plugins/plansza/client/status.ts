@@ -77,3 +77,17 @@ export function storyOf(title: string | null): string | null {
   const match = /(?:^|[-\s])(\d+[a-z]?-\d+[a-z]?)(?=$|[-\s(])/i.exec(title);
   return match ? match[1].toLowerCase() : null;
 }
+
+/**
+ * Project identity on the board: the name of the project directory, so the same project on several computers
+ * (`/home/kuba/projects/aquila-fk`, `C:\projects\aquila-fk`) is one project. Falls back to Paseo's display name.
+ */
+export function projectKey(workspace: { projectRootPath: string; projectDisplayName: string }): string {
+  const parts = workspace.projectRootPath.split(/[\\/]+/).filter(Boolean);
+  return parts.length > 0 ? parts[parts.length - 1] : workspace.projectDisplayName;
+}
+
+/** Path for display: home directory as "~". */
+export function shortPath(root: string): string {
+  return root.replace(/^\/home\/[^/]+/, "~").replace(/^\/root(?=\/|$)/, "~");
+}

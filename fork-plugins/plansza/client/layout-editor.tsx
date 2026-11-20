@@ -1,8 +1,9 @@
-import { useSettings } from "@getpaseo/plugin/client";
+import { useHosts, useSettings } from "@getpaseo/plugin/client";
 import { useCallback } from "react";
 import { Pressable, Text, View } from "react-native";
 import { layoutSettings, type Layout, type ProjectKind } from "../shared/contracts";
-import type { Styles } from "./board";
+import type { ProjectPaths, Styles } from "./board";
+import { shortPath } from "./status";
 
 function Chip({ label, onPress, styles, on, a11y }: { label: string; onPress: () => void; styles: Styles; on?: boolean; a11y?: string }) {
   return (
@@ -22,8 +23,10 @@ const toggle = (list: string[], name: string) => (list.includes(name) ? list.fil
 const KIND_LABEL: Record<ProjectKind, string> = { dev: "Deweloperski", side: "Poboczny" };
 
 /** Order, kind (dev/side), collapse, hide and backlog per project; saved on the host for every client. */
-export function LayoutEditor({ names, withBacklog, styles, onDone }: { names: string[]; withBacklog: Set<string>; styles: Styles; onDone: () => void }) {
+export function LayoutEditor({ names, paths, withBacklog, styles, onDone }: { names: string[]; paths: ProjectPaths; withBacklog: Set<string>; styles: Styles; onDone: () => void }) {
   const settings = useSettings(layoutSettings);
+  const hosts = useHosts();
+  const hostLabel = (id: string) => hosts.find((h) => h.serverId === id)?.label ?? id;
   const layout: Layout | null = settings.status === "ready" ? settings.values : null;
   const save = useCallback(
     (next: Layout) => {
@@ -79,6 +82,11 @@ export function LayoutEditor({ names, withBacklog, styles, onDone }: { names: st
               <Text style={[styles.text, { fontWeight: "600" }]}>{name}</Text>
               <Text style={styles.muted}>{[kind ? KIND_LABEL[kind] : "bez grupy", hidden ? "ukryty" : null].filter(Boolean).join(" · ")}</Text>
             </View>
+            {Object.entries(paths[name] ?? {}).map(([hostId, root]) => (
+              <Text key={hostId} style={styles.muted} selectable>
+                {hostLabel(hostId)}: {shortPath(root)}
+              </Text>
+            ))}
             <View style={[styles.row, { flexWrap: "wrap", gap: 6 }]}>
               <Chip label="↑" a11y={`${name} w górę`} onPress={() => move(name, -1)} styles={styles} />
               <Chip label="↓" a11y={`${name} w dół`} onPress={() => move(name, 1)} styles={styles} />
@@ -102,6 +110,7 @@ export function LayoutEditor({ names, withBacklog, styles, onDone }: { names: st
         );
       })}
       <Text style={styles.muted}>
+        Projekt to katalog: ten sam katalog na kilku komputerach (np. aquila-fk na VPS i na Windows) jest jednym projektem.
         Układ zapisuje się na wybranym hoście, więc w przeglądarce i na telefonie jest ten sam. Ukryty projekt wraca na planszę
         sam, gdy któraś jego sesja zacznie na Ciebie czekać.
       </Text>

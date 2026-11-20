@@ -16,7 +16,7 @@ import { useCallback, useEffect, useMemo, useState, type ReactNode } from "react
 import { Linking, Pressable, ScrollView, Text, View } from "react-native";
 import { boardStatus, layoutSettings, type Backlog, type Layout } from "../shared/contracts";
 import { LayoutEditor } from "./layout-editor";
-import { sessionState, since, stateColor, storyOf, type SessionState, type StateKind } from "./status";
+import { projectKey, sessionState, shortPath, since, stateColor, storyOf, type SessionState, type StateKind } from "./status";
 
 /** What the board needs from its surface: a full screen (web, app 0.17+) or a sidebar view (app 0.16). */
 export interface BoardProps {
@@ -232,7 +232,7 @@ function Header({ props, styles, data, onEdit }: { props: Props; styles: Styles;
 // ---------------------------------------------------------------- needs you
 
 function ProjectName({ reference }: { reference: WorkspaceRef }) {
-  const name = useWorkspace(reference, (w) => w.projectDisplayName);
+  const name = useWorkspace(reference, projectKey);
   return <>{name ?? ""}</>;
 }
 
@@ -344,7 +344,7 @@ interface ProjectGroup {
 function useProjectGroups(): ProjectGroup[] {
   const groups = useWorkspaces({
     where: (w) => !w.background && w.archivingAt === null,
-    groupBy: (w) => w.projectDisplayName,
+    groupBy: projectKey,
   });
   return useMemo(
     () => groups.map((group) => ({ name: group.key, workspaceKeys: new Set(group.items.map((item) => item.key)) })),
@@ -352,12 +352,15 @@ function useProjectGroups(): ProjectGroup[] {
   );
 }
 
-/** Reports the project root of a workspace on the plugin's host (for the backlog RPC). */
-function ProjectRoot({ reference, onRoot }: { reference: WorkspaceRef; onRoot: (name: string, root: string) => void }) {
-  const info = useWorkspace(reference, (w) => ({ name: w.projectDisplayName, root: w.projectRootPath }));
+/** Where a project lives on each host: host id → project root path. */
+export type ProjectPaths = Record<string, Record<string, string>>;
+
+/** Reports the project root of a workspace (paths in the editor; the backlog RPC on the plugin's host). */
+function ProjectRoot({ reference, onRoot }: { reference: WorkspaceRef; onRoot: (name: string, hostId: string, root: string) => void }) {
+  const info = useWorkspace(reference, (w) => ({ name: projectKey(w), root: w.projectRootPath }));
   useEffect(() => {
-    if (info) onRoot(info.name, info.root);
-  }, [info?.name, info?.root, onRoot]);
+    if (info) onRoot(info.name, reference.hostId, info.root);
+  }, [info?.name, info?.root, reference.hostId, onRoot]);
   return null;
 }
 
@@ -488,7 +491,7 @@ function ProjectTable({ group, props, styles, data, counts, backlog, root, colla
       >
         <View style={[styles.row, { gap: 10 }]}>
           <Text style={[styles.strong, { fontSize: 16 }]}>{group.name}</Text>
-          {root ? <Text style={styles.muted}>{root.replace(/^\/home\/[^/]+/, "~")}{backlog ? " · BMAD" : ""}</Text> : null}
+          {root ? <Text style={styles.muted}>{shortPath(root)}{backlog ? " · BMAD" : ""}</Text> : null}
         </View>
         <Text style={styles.muted}>
           {summary(counts)} {open ? "▾" : "▸"}
@@ -642,27 +645,41 @@ export function Board(props: Props) {
   const layout = settings.status === "ready" ? settings.values : EMPTY_LAYOUT;
   const groups = useProjectGroups();
   const [editing, setEditing] = useState(false);
-  const localWorkspaces = useWorkspaces({ where: (w) => !w.background && (props.hostId === null || w.hostId === props.hostId) });
+  const allWorkspaces = useWorkspaces({ where: (w) => !w.background && w.archivingAt === null });
 
-  const [roots, setRoots] = useState<Record<string, string>>({});
-  const onRoot = useCallback((name: string, root: string) => {
-    setRoots((current) => (current[name] === root ? current : { ...current, [name]: root }));
+  const [paths, setPaths] = useState<ProjectPaths>({});
+  const onRoot = useCallback((name: string, hostId: string, root: string) => {
+    setPaths((current) =>
+      current[name]?.[hostId] === root ? current : { ...current, [name]: { ...current[name], [hostId]: root } },
+    );
   }, []);
+  // The backlog is read by the plugin on the host that answers the RPC, so only that host's paths count
+  // (a sidebar view does not know that host: it asks for every path and keeps what the host could read).
+  const candidates = useMemo(() => {
+    const result: Record<string, string[]> = {};
+    for (const [name, byHost] of Object.entries(paths)) {
+      const list = props.hostId === null ? Object.values(byHost) : byHost[props.hostId] ? [byHost[props.hostId]] : [];
+      if (list.length > 0) result[name] = list;
+    }
+    return result;
+  }, [paths, props.hostId]);
   const [counts, setCounts] = useState<Record<string, Counts>>({});
   const onCounts = useCallback((name: string, next: Counts) => {
     setCounts((current) => ({ ...current, [name]: next }));
   }, []);
 
   const backlogRoots = useMemo(
-    () => Object.entries(roots).filter(([name]) => !layout.noBacklog.includes(name)).map(([, root]) => root).sort(),
-    [roots, layout.noBacklog],
+    () => [...new Set(Object.entries(candidates).filter(([name]) => !layout.noBacklog.includes(name)).flatMap(([, list]) => list))].sort(),
+    [candidates, layout.noBacklog],
   );
   const data = useBoardData(props, backlogRoots);
+  const roots: Record<string, string> = {};
+  for (const [name, list] of Object.entries(candidates)) roots[name] = list.find((root) => data.backlogs.has(root)) ?? list[0];
   const backlogOf = (name: string) => (roots[name] && !layout.noBacklog.includes(name) ? (data.backlogs.get(roots[name]) ?? null) : null);
 
   const reporters = (
     <>
-      {localWorkspaces.map((reference) => (
+      {allWorkspaces.map((reference) => (
         <ProjectRoot key={reference.key} reference={reference} onRoot={onRoot} />
       ))}
       {groups.map((group) => (
@@ -677,6 +694,7 @@ export function Board(props: Props) {
         {reporters}
         <LayoutEditor
           names={groups.map((g) => g.name)}
+          paths={paths}
           withBacklog={new Set(Object.keys(roots).filter((name) => data.backlogs.has(roots[name]) || layout.noBacklog.includes(name)))}
           styles={styles}
           onDone={() => setEditing(false)}
