@@ -47,6 +47,19 @@ node packages\cli\bin\paseo daemon status
 Daemon słucha tylko na `127.0.0.1:6767`, stan w `%USERPROFILE%\.paseo`. Web UI jest domyślnie wyłączone — nie
 włączaj go. Hasła nie ustawiamy: daemon nie jest wystawiony w sieci, a relay ma własne parowanie urządzeń.
 
+## 3a. Powiadomienia jak na VPS
+
+Push na telefon tylko wtedy, gdy sesja czeka na zgodę albo stoi na błędzie dłużej niż 2 minuty (zakończone
+tury bez pusha). Zmienne użytkownika, potem restart daemona w nowym terminalu:
+
+```powershell
+[Environment]::SetEnvironmentVariable("PASEO_NOTIFY_REASONS", "permission,error", "User")
+[Environment]::SetEnvironmentVariable("PASEO_PUSH_DELAY_MS", "120000", "User")
+```
+
+Otwórz nowy terminal (zmienne działają w nowych procesach) i:
+`node packages\cli\bin\paseo daemon restart`.
+
 ## 4. Autostart po zalogowaniu
 
 Zadanie Harmonogramu zadań uruchamiające daemona przy logowaniu użytkownika (podmień ścieżkę, jeśli klon
@@ -79,8 +92,15 @@ node packages\cli\bin\paseo run --provider claude --model haiku --title "test wi
 ```
 
 Oczekiwane: status `completed`; w `%USERPROFILE%\.paseo\daemon.log` linia `Claude Remote Control enabled`
-z `remoteControlUrl`; sesja „paseo: test windows” widoczna w aplikacji Claude. Potem:
+z `remoteControlUrl`; sesja „test windows” widoczna w aplikacji Claude (nazwa sesji = tytuł w Paseo). Potem:
 `node packages\cli\bin\paseo archive <id>`.
+
+## 7. Raport dla właściciela
+
+Na koniec podaj właścicielowi krótko: nazwę komputera (`hostname`), wersję daemona, wynik testu z kroku 6
+i **link parowania** z kroku 5. Wypisz też, jakie sesje Claude działają teraz na tym komputerze poza
+Paseo (katalog `%USERPROFILE%\.claude\sessions\*.json`: pola `name`, `cwd`, `status`) — niczego w nich nie
+zmieniaj; to tylko obraz sytuacji do podłączenia ich później.
 
 ## Aktualizacja (później)
 
