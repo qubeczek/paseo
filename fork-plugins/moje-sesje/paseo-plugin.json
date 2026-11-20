@@ -1,0 +1,8 @@
+{
+  "id": "moje-sesje",
+  "media": [],
+  "requirements": {
+    "paseo": ">=0.16.2"
+  },
+  "name": "Moje sesje"
+}

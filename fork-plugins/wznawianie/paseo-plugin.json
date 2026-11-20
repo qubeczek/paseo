@@ -1,0 +1,8 @@
+{
+  "id": "wznawianie",
+  "media": [],
+  "requirements": {
+    "paseo": ">=0.16.2"
+  },
+  "name": "Wznawianie sesji"
+}

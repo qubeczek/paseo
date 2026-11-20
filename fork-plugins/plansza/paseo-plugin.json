@@ -1,0 +1,8 @@
+{
+  "id": "plansza",
+  "name": "Plansza",
+  "media": [],
+  "requirements": {
+    "paseo": ">=0.16.2"
+  }
+}

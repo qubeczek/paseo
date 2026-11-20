@@ -1,0 +1,8 @@
+{
+  "id": "artefakty",
+  "name": "Artefakty w sesjach Claude",
+  "media": [],
+  "requirements": {
+    "paseo": ">=0.16.2"
+  }
+}
