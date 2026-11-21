@@ -148,6 +148,56 @@ $trigger = New-ScheduledTaskTrigger -AtLogOn -User $env:USERNAME
 Register-ScheduledTask -TaskName "Paseo daemon" -Action $action -Trigger $trigger -Description "Paseo daemon (fork qubeczek/paseo)"
 ```
 
+## 4a. Sesja `supervisor` po każdym starcie daemona
+
+Odpowiednik `paseo-supervisor.service` z VPS. Skrypt `ops/supervisor/ensure-supervisor.mjs` (sam Node, ten
+sam na Linuksie i Windows) czeka, aż daemon odpowie. Gdy nie ma sesji z etykietą `role=supervisor`, zakłada ją
+w `C:\projects\paseo` z tytułem i nazwą w Remote Control `supervisor (01)` oraz etykietą
+`supervisor-scope=local`. Gdy sesja jest, ale bez procesu Claude (tak jest po każdym starcie daemona), budzi ją
+jedną wiadomością. Rolę (skill `ops/skills/paseo-supervisor`) dokleja plugin `supervisor-rola`, więc musi być
+zainstalowany (krok 5a). Lokalny supervisor zajmuje się tylko tą maszyną; sesjami w klastrze zarządza
+supervisor na VPS.
+
+Dodaj skrypt jako drugą akcję zadania z kroku 4. Akcje wykonują się po kolei, więc skrypt rusza po
+`daemon start`:
+
+```powershell
+$repo = "C:\projects\paseo"
+$node = (Get-Command node).Source
+$start = New-ScheduledTaskAction -Execute $node -Argument "packages\cli\bin\paseo daemon start" -WorkingDirectory $repo
+$ensure = New-ScheduledTaskAction -Execute $node -WorkingDirectory $repo `
+  -Argument "ops\supervisor\ensure-supervisor.mjs --cwd $repo --name `"supervisor (01)`" --scope local"
+Set-ScheduledTask -TaskName "Paseo daemon" -Action $start, $ensure
+```
+
+Ręczny start albo restart daemona (aktualizacja, 3b) kończ tym samym poleceniem:
+
+```powershell
+node ops\supervisor\ensure-supervisor.mjs --cwd C:\projects\paseo --name "supervisor (01)" --scope local
+```
+
+Sprawdzenie: `node packages\cli\bin\paseo ls --label role=supervisor` pokazuje jedną sesję `supervisor (01)`, w
+aplikacji Claude widać ją w Remote Control, a `node packages\cli\bin\paseo plugin logs supervisor-rola` ma
+linię `rola z ...\ops\skills\paseo-supervisor\SKILL.md doklejona`.
+
+### Wdrożenie na LT01313 (raz)
+
+Wymaga restartu daemona, a ten kończy sesje Paseo na tej maszynie. **Rób to tylko po zgodzie właściciela.**
+
+```powershell
+cd C:\projects\paseo
+git pull
+npm ci
+npm run build:server
+node packages\cli\bin\paseo plugin install C:\projects\paseo\fork-plugins\supervisor-rola --id supervisor-rola
+node packages\cli\bin\paseo daemon stop
+node packages\cli\bin\paseo daemon start
+node ops\supervisor\ensure-supervisor.mjs --cwd C:\projects\paseo --name "supervisor (01)" --scope local
+```
+
+Jeśli `supervisor-rola` jest już zainstalowany, zamiast `plugin install` wystarczy restart daemona. Potem
+zmień zadanie Harmonogramu (powyżej) i sprawdź wynik.
+
 ## 5. Relay i link parowania
 
 ```powershell
@@ -194,6 +244,7 @@ npm ci
 npm run build:server
 node packages\cli\bin\paseo daemon stop
 node packages\cli\bin\paseo daemon start
+node ops\supervisor\ensure-supervisor.mjs --cwd C:\projects\paseo --name "supervisor (01)" --scope local
 ```
 
 Jeśli od instalacji aktualizował się Claude Desktop, najpierw powtórz sprawdzenie z 1a. Restart daemona kończy wszystkie sesje uruchomione przez Paseo na tym komputerze — rób go tylko w przerwie.

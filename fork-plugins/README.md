@@ -9,6 +9,7 @@ Poza workspace'ami npm repo — `npm ci` w korzeniu ich nie dotyka.
 | `artefakty`  | Dokłada `CLAUDE_CODE_ARTIFACT=1` sesjom Claude — bez tego tryb SDK wyłącza narzędzie Artifact                                |
 | `wznawianie` | Wznawia sesje po limicie konta / błędzie API                                                                                 |
 | `moje-sesje` | Widok panelu bocznego: sesje według pilności                                                                                 |
+| `supervisor-rola` | Dokleja skill `paseo-supervisor` sesjom z etykietą `role=supervisor` (sesja z `ops/supervisor/ensure-supervisor.mjs`) |
 
 ## Instalacja (Linux / Windows PowerShell)
 
@@ -43,6 +44,7 @@ Z korzenia repo, po `git pull`. Polecenia działają w bash i w PowerShell.
    node packages/cli/bin/paseo plugin install <pełna ścieżka>/fork-plugins/artefakty --id artefakty
    node packages/cli/bin/paseo plugin install <pełna ścieżka>/fork-plugins/wznawianie --id wznawianie
    node packages/cli/bin/paseo plugin install <pełna ścieżka>/fork-plugins/moje-sesje --id moje-sesje
+   node packages/cli/bin/paseo plugin install <pełna ścieżka>/fork-plugins/supervisor-rola --id supervisor-rola
    ```
 
 4. Sprawdzenie: `node packages/cli/bin/paseo plugin ls` ma pokazać każdy plugin z `STATUS running`, `ENABLED yes`
