@@ -297,7 +297,7 @@ function NeedsYouCard({ reference, props, styles, data }: { reference: AgentRef;
   const host = hosts.length > 1 ? hosts.find((h) => h.serverId === agent.hostId)?.label : null;
   const url = remoteControlUrl(agent);
   return (
-    <View style={[styles.card, { backgroundColor: tint(color, 0.1), borderColor: tint(color, 0.5), flexBasis: 340, flexGrow: 0, flexShrink: 1, minWidth: 260, maxWidth: 480 }]}>
+    <View style={[styles.card, { backgroundColor: tint(color, 0.1), borderColor: tint(color, 0.5), ...CARD_WIDTH }]}>
       <View style={[styles.row, { justifyContent: "space-between" }]}>
         <Text style={[styles.label, { color }]}>{state.kind === "permission" ? "Prośba o zgodę" : state.kind === "question" ? "Pytanie do Ciebie" : "Błąd"}</Text>
         <Text style={{ color, fontSize: 12, fontWeight: "600" }}>czeka {since(agent.updatedAt)}</Text>
@@ -328,25 +328,57 @@ function UnreadLine({ reference, props, styles }: { reference: AgentRef; props: 
       onPress={() => openAgent(props, agent)}
       style={[styles.row, { minHeight: 36, justifyContent: "space-between" }]}
     >
-      <Text numberOfLines={1} style={[styles.text, { flexShrink: 1 }]}>
-        <Text style={styles.strong}>{agent.title ?? "Bez tytułu"}</Text>
-        <Text style={styles.muted}>
-          {"  "}
-          <ProjectName reference={agent.workspace} />
-        </Text>
+      <Text numberOfLines={1} style={[styles.strong, { flexShrink: 1 }]}>
+        {agent.title ?? "Bez tytułu"}
       </Text>
       <Text style={styles.muted}>{since(agent.updatedAt)}</Text>
     </Pressable>
   );
 }
 
-function NeedsYou({ props, styles, data }: { props: Props; styles: Styles; data: BoardData }) {
+const CARD_WIDTH = { flexBasis: 300, flexGrow: 0, flexShrink: 1, minWidth: 240, maxWidth: 420 } as const;
+
+/** One column of finished, unread sessions of one project. */
+function UnreadProject({ name, items, props, styles }: { name: string; items: readonly AgentRef[]; props: Props; styles: Styles }) {
   const c = styles.c;
+  const [all, setAll] = useState(false);
+  const shown = all ? items : items.slice(0, 6);
+  return (
+    <View style={[styles.card, { backgroundColor: tint(c.statusSuccess, 0.08), borderColor: tint(c.statusSuccess, 0.4), gap: 4 }, CARD_WIDTH]}>
+      <View style={[styles.row, { justifyContent: "space-between", paddingBottom: 4 }]}>
+        <Text numberOfLines={1} style={[styles.strong, { flexShrink: 1 }]}>{name}</Text>
+        <Text style={[styles.label, { color: c.statusSuccess }]}>nieprzeczytane · {items.length}</Text>
+      </View>
+      {shown.map((reference) => (
+        <UnreadLine key={reference.key} reference={reference} props={props} styles={styles} />
+      ))}
+      {items.length > 6 ? (
+        <Pressable accessibilityRole="button" onPress={() => setAll((v) => !v)} style={{ minHeight: 32, justifyContent: "center" }}>
+          <Text style={{ color: c.accent, fontSize: 13 }}>{all ? "Zwiń" : `Pokaż wszystkie (${items.length})`}</Text>
+        </Pressable>
+      ) : null}
+    </View>
+  );
+}
+
+function NeedsYou({ props, styles, data }: { props: Props; styles: Styles; data: BoardData }) {
   const byWait = (a: PluginAgentSnapshot, b: PluginAgentSnapshot) =>
     stateOf(a, data).priority - stateOf(b, data).priority || Date.parse(a.updatedAt) - Date.parse(b.updatedAt);
   const waiting = useAgents({ where: (a) => visible(a) && stateOf(a, data).needsYou, orderBy: byWait });
-  const unread = useAgents({ where: (a) => visible(a) && stateOf(a, data).kind === "finished", orderBy: ["updatedAt", "desc"] });
   const paused = useAgents({ where: (a) => visible(a) && pausedFor(a, data) !== undefined });
+  const groups = useProjectGroups();
+  const projectOf = useMemo(() => {
+    const map = new Map<string, string>();
+    for (const group of groups) for (const key of group.workspaceKeys) map.set(key, group.name);
+    return map;
+  }, [groups]);
+  // Unread sessions in one column per project; newest project first (items are newest first).
+  const byProject = useAgents({
+    where: (a) => visible(a) && stateOf(a, data).kind === "finished",
+    orderBy: ["updatedAt", "desc"],
+    groupBy: (a) => projectOf.get(a.workspace.key) ?? "Inne",
+  });
+  const unreadCount = byProject.reduce((sum, group) => sum + group.items.length, 0);
   return (
     <View style={{ gap: 12 }}>
       <View style={[styles.row, { gap: 12 }]}>
@@ -355,32 +387,24 @@ function NeedsYou({ props, styles, data }: { props: Props; styles: Styles; data:
         </Text>
         <Text style={styles.muted}>najdłużej czekające pierwsze</Text>
       </View>
-      <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 12 }}>
+      <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 12, alignItems: "flex-start" }}>
         {waiting.map((reference) => (
           <NeedsYouCard key={reference.key} reference={reference} props={props} styles={styles} data={data} />
         ))}
-        <View
-          style={[
-            styles.card,
-            unread.length ? { backgroundColor: tint(c.statusSuccess, 0.08), borderColor: tint(c.statusSuccess, 0.4) } : null,
-            { flexBasis: 340, flexGrow: 0, flexShrink: 1, minWidth: 260, maxWidth: 480 },
-          ]}
-        >
-          <View style={[styles.row, { justifyContent: "space-between" }]}>
-            <Text style={[styles.label, unread.length ? { color: c.statusSuccess } : null]}>Skończone, nieprzeczytane</Text>
-            <Text style={styles.muted}>{unread.length}</Text>
+        {byProject.map((group) => (
+          <UnreadProject key={group.key} name={group.key} items={group.items} props={props} styles={styles} />
+        ))}
+        {waiting.length === 0 && unreadCount === 0 ? (
+          <View style={[styles.card, CARD_WIDTH]}>
+            <Text style={styles.muted}>Nic na Ciebie nie czeka.</Text>
           </View>
-          {waiting.length === 0 && unread.length === 0 ? <Text style={styles.muted}>Nic na Ciebie nie czeka.</Text> : null}
-          {unread.slice(0, 6).map((reference) => (
-            <UnreadLine key={reference.key} reference={reference} props={props} styles={styles} />
-          ))}
-          {paused.length > 0 ? (
-            <Text style={styles.muted}>
-              Bez alarmu: {paused.length} {paused.length === 1 ? "sesja wstrzymana" : "sesje wstrzymane"} limitem konta, wrócą same.
-            </Text>
-          ) : null}
-        </View>
+        ) : null}
       </View>
+      {paused.length > 0 ? (
+        <Text style={styles.muted}>
+          Bez alarmu: {paused.length} {paused.length === 1 ? "sesja wstrzymana" : "sesje wstrzymane"} limitem konta, wrócą same.
+        </Text>
+      ) : null}
     </View>
   );
 }
