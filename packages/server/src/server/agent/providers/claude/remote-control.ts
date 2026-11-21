@@ -9,20 +9,61 @@ import path from "node:path";
  */
 export type ClaudeBridgeState = "connected" | "disconnected" | "unknown";
 
-export async function readClaudeBridgeState(
-  configDir: string,
-  pid: number | undefined,
-): Promise<ClaudeBridgeState> {
-  if (pid === undefined) return "unknown";
-  let entry: unknown;
-  try {
-    entry = JSON.parse(await fs.readFile(path.join(configDir, "sessions", `${pid}.json`), "utf8"));
-  } catch {
-    return "unknown";
-  }
+function bridgeOf(entry: unknown): ClaudeBridgeState {
   if (typeof entry !== "object" || entry === null) return "unknown";
   const bridge = (entry as { bridgeSessionId?: unknown }).bridgeSessionId;
   return typeof bridge === "string" && bridge.length > 0 ? "connected" : "disconnected";
+}
+
+function alive(pid: unknown): boolean {
+  if (typeof pid !== "number") return false;
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (error) {
+    return (error as NodeJS.ErrnoException).code === "EPERM";
+  }
+}
+
+/**
+ * Reads the registry entry of the Claude process: by its pid, or, when Paseo does not know that pid
+ * (a held session runs Claude under the `claude-hold` wrapper, so the child pid is the wrapper's),
+ * by the Claude session id among entries of live processes.
+ */
+export async function readClaudeBridgeState(
+  configDir: string,
+  pid: number | undefined,
+  sessionId?: string | null,
+): Promise<ClaudeBridgeState> {
+  const dir = path.join(configDir, "sessions");
+  if (pid !== undefined) {
+    try {
+      return bridgeOf(JSON.parse(await fs.readFile(path.join(dir, `${pid}.json`), "utf8")));
+    } catch {
+      // Not Claude's own pid (held session) or not written yet: fall back to the session id.
+    }
+  }
+  if (!sessionId) return "unknown";
+  let names: string[];
+  try {
+    names = await fs.readdir(dir);
+  } catch {
+    return "unknown";
+  }
+  let best: { updatedAt: number; entry: unknown } | null = null;
+  for (const name of names) {
+    if (!name.endsWith(".json")) continue;
+    let entry: { sessionId?: unknown; pid?: unknown; updatedAt?: unknown };
+    try {
+      entry = JSON.parse(await fs.readFile(path.join(dir, name), "utf8"));
+    } catch {
+      continue;
+    }
+    if (entry?.sessionId !== sessionId || !alive(entry.pid)) continue;
+    const updatedAt = typeof entry.updatedAt === "number" ? entry.updatedAt : 0;
+    if (!best || updatedAt > best.updatedAt) best = { updatedAt, entry };
+  }
+  return best ? bridgeOf(best.entry) : "unknown";
 }
 
 export interface RemoteControlKeeperOptions {

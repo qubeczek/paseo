@@ -3836,7 +3836,11 @@ class ClaudeAgentSession implements AgentSession {
     this.stopRemoteControlWatch();
     const keeper = new RemoteControlKeeper({
       readState: () =>
-        readClaudeBridgeState(claudeConfigDir(this.harnessEnvironment), this.childProcess?.pid),
+        readClaudeBridgeState(
+          claudeConfigDir(this.harnessEnvironment),
+          this.childProcess?.pid,
+          this.claudeSessionId,
+        ),
       reconnect: () => {
         this.logger.info("Claude Remote Control bridge dropped, registering again");
         return register();

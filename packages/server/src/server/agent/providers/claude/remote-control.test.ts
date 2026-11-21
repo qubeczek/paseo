@@ -37,6 +37,18 @@ describe("readClaudeBridgeState", () => {
     expect(await readClaudeBridgeState(dir, 7)).toBe("unknown");
     expect(await readClaudeBridgeState(dir, undefined)).toBe("unknown");
   });
+
+  it("finds a held session's Claude process by session id", async () => {
+    const dir = await writeEntry(process.pid, { pid: process.pid, sessionId: "s-1", bridgeSessionId: "" });
+    // The wrapper pid has no entry; the live Claude process with the same session id does.
+    expect(await readClaudeBridgeState(dir, 7, "s-1")).toBe("disconnected");
+    expect(await readClaudeBridgeState(dir, 7, "other")).toBe("unknown");
+  });
+
+  it("ignores registry entries of dead processes", async () => {
+    const dir = await writeEntry(999_999_999, { pid: 999_999_999, sessionId: "s-1", bridgeSessionId: "x" });
+    expect(await readClaudeBridgeState(dir, 7, "s-1")).toBe("unknown");
+  });
 });
 
 function keeperWith(states: ClaudeBridgeState[]) {
