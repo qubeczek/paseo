@@ -3791,6 +3791,10 @@ class ClaudeAgentSession implements AgentSession {
     // supportedCommands()/setPermissionMode() may execute immediately after
     // ensureQuery() (for listCommands()/setMode()), and sharing the same query
     // control plane can cause those calls to wait behind supportedModels().
+    // A held process (PASEO_CLAUDE_HOLD) may be one that survived a daemon restart, still finishing
+    // background work. Its own turns (task notifications) would otherwise sit unread until the next
+    // prompt starts the pump, so read it from the moment it is attached.
+    if (this.childProcess && isHeldClaudeProcess(this.childProcess)) this.startQueryPump();
     return this.query;
   }
 

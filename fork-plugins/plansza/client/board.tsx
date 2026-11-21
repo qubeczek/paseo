@@ -297,7 +297,7 @@ function NeedsYouCard({ reference, props, styles, data }: { reference: AgentRef;
   const host = hosts.length > 1 ? hosts.find((h) => h.serverId === agent.hostId)?.label : null;
   const url = remoteControlUrl(agent);
   return (
-    <View style={[styles.card, { backgroundColor: tint(color, 0.1), borderColor: tint(color, 0.5), flexGrow: 1, flexBasis: 300, minWidth: 260 }]}>
+    <View style={[styles.card, { backgroundColor: tint(color, 0.1), borderColor: tint(color, 0.5), flexBasis: 340, flexGrow: 0, flexShrink: 1, minWidth: 260, maxWidth: 480 }]}>
       <View style={[styles.row, { justifyContent: "space-between" }]}>
         <Text style={[styles.label, { color }]}>{state.kind === "permission" ? "Prośba o zgodę" : state.kind === "question" ? "Pytanie do Ciebie" : "Błąd"}</Text>
         <Text style={{ color, fontSize: 12, fontWeight: "600" }}>czeka {since(agent.updatedAt)}</Text>
@@ -363,7 +363,7 @@ function NeedsYou({ props, styles, data }: { props: Props; styles: Styles; data:
           style={[
             styles.card,
             unread.length ? { backgroundColor: tint(c.statusSuccess, 0.08), borderColor: tint(c.statusSuccess, 0.4) } : null,
-            { flexGrow: 1, flexBasis: 300, minWidth: 260 },
+            { flexBasis: 340, flexGrow: 0, flexShrink: 1, minWidth: 260, maxWidth: 480 },
           ]}
         >
           <View style={[styles.row, { justifyContent: "space-between" }]}>
@@ -597,8 +597,10 @@ function ProjectTile({ group, props, styles, data, counts }: { group: ProjectGro
 
 // ---------------------------------------------------------------- backlog
 
-function BacklogTile({ name, backlog, styles, props }: { name: string; backlog: Backlog; styles: Styles; props: Props }) {
+function BacklogTile({ name, backlog, styles, props, collapsed }: { name: string; backlog: Backlog; styles: Styles; props: Props; collapsed: boolean }) {
   const [all, setAll] = useState(false);
+  const [open, setOpen] = useState(!collapsed);
+  useEffect(() => setOpen(!collapsed), [collapsed]);
   const c = styles.c;
   const counts = backlog.counts;
   const queue = backlog.queue ?? [];
@@ -610,11 +612,22 @@ function BacklogTile({ name, backlog, styles, props }: { name: string; backlog: 
     </View>
   );
   return (
-    <View style={{ gap: 12 }}>
-      <Text accessibilityRole="header" style={styles.h2}>
-        Backlog · {name}
-      </Text>
-      <View style={styles.card}>
+    <View style={[styles.card, { gap: open ? 12 : 4 }]}>
+      <Pressable
+        accessibilityRole="button"
+        accessibilityLabel={`${open ? "Zwiń" : "Rozwiń"} backlog ${name}`}
+        onPress={() => setOpen((v) => !v)}
+        style={[styles.row, { justifyContent: "space-between", flexWrap: "wrap", minHeight: 36 }]}
+      >
+        <Text accessibilityRole="header" style={[styles.strong, { fontSize: 16 }]}>
+          Backlog · {name}
+        </Text>
+        <Text style={styles.muted}>
+          {backlog.inProgress.length} w toku · {counts["backlog"] ?? 0} backlog {open ? "▾" : "▸"}
+        </Text>
+      </Pressable>
+      {open ? (
+      <View style={{ gap: 12 }}>
         <View style={[styles.row, { gap: 8 }]}>
           {stat(backlog.inProgress.length, "w toku", c.accent)}
           {stat(counts["backlog"] ?? 0, "backlog")}
@@ -629,13 +642,14 @@ function BacklogTile({ name, backlog, styles, props }: { name: string; backlog: 
           const fraction = story.total ? story.done / story.total : 0;
           return (
             <View key={story.key} style={{ gap: 5 }}>
-              <View style={[styles.row, { justifyContent: "space-between", alignItems: "flex-start" }]}>
-                <Text numberOfLines={1} style={[styles.text, { flex: 1 }]}>
-                  <Text style={styles.strong}>{story.short}</Text>
-                  {story.title ? <Text style={styles.muted}>  {story.title}</Text> : null}
-                </Text>
-                <Text style={styles.muted}>{story.phase ? `${story.phase.id} ${story.phase.name}` : story.total ? "—" : "stary harness"}</Text>
-              </View>
+              <Text numberOfLines={1} style={styles.text}>
+                <Text style={styles.strong}>{story.short}</Text>
+                {story.title ? <Text style={styles.muted}>  {story.title}</Text> : null}
+              </Text>
+              <Text numberOfLines={1} style={[styles.muted, { fontSize: 12 }]}>
+                {story.phase ? `${story.phase.id} ${story.phase.name}` : story.total ? "—" : "stary harness"}
+                {story.total ? ` · ${story.done}/${story.total}` : ""}
+              </Text>
               <View style={{ height: 6, borderRadius: 3, backgroundColor: c.surface2 }}>
                 <View style={{ height: 6, borderRadius: 3, width: `${Math.max(4, Math.round(fraction * 100))}%`, backgroundColor: c.accent }} />
               </View>
@@ -674,6 +688,7 @@ function BacklogTile({ name, backlog, styles, props }: { name: string; backlog: 
           odczyt {new Date(backlog.readAt).toTimeString().slice(0, 5)}{props.hostLabel ? ` · ${props.hostLabel}` : ""}
         </Text>
       </View>
+      ) : null}
     </View>
   );
 }
@@ -838,7 +853,7 @@ export function Board(props: Props) {
         {backlogs.length > 0 ? (
           <View style={{ gap: 24, flex: wide ? 1 : undefined, minWidth: wide ? 360 : undefined, width: wide ? undefined : "100%" }}>
             {backlogs.map(({ name, backlog }) => (
-              <BacklogTile key={name} name={name} backlog={backlog} styles={styles} props={props} />
+              <BacklogTile key={name} name={name} backlog={backlog} styles={styles} props={props} collapsed={layout.collapsed.includes(name)} />
             ))}
           </View>
         ) : null}
