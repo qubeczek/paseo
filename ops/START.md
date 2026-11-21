@@ -107,12 +107,15 @@ pokazać link `session_url` w UI Paseo (przycisk „Otwórz w Claude”), rozwa�
   daemon per host, relay E2E, parowanie per urządzenie, aplikacja iOS w App Store, pluginy (sidebar,
   renderery timeline, backend), CLI `paseo run`, Codex przez `codex app-server`.
 
-## Czeka na restart (za zgodą właściciela): `./deploy-restart.sh`
-Dist zbudowany z forka do 4c6d8234a; działający daemon ma jeszcze stary kod. Skrypt: dopisuje
-`PASEO_CLAUDE_HOLD=1` oraz `PASEO_NOTIFY_REASONS=permission,error` i `PASEO_PUSH_DELAY_MS=120000` (push tylko, gdy sesja czeka na zgodę lub stoi na błędzie ≥2 min; zakończone tury bez pusha) do unitu, zatrzymuje daemona, poprawia w rekordzie w-pm nazwę RC (`w-w-pm` → `w-pm`)
-i startuje daemona. Wchodzi: `paseo agent update --env/--unset-env` (91582ed95, 11bb557cb) i prototyp
-sesji przeżywających restart (58564f7c5, opis i otwarte krawędzie: `src/docs/claude-hold.md`).
-Wyłączenie holdów: usunąć `Environment=PASEO_CLAUDE_HOLD=1` z unitu (zadziała przy kolejnym restarcie).
+## Czeka na restart (za zgodą właściciela), stan 2026-11-21 ~13:30 UTC
+- **VPS**: dist zbudowany z 858a13cb3 (pompa strumienia dla sesji ponownie podłączonych pod holdem:
+  tury, które Claude zaczyna sam, widać w Paseo od razu). Restart zwykły (`systemctl --user restart
+  paseo-daemon`); zmiany unitu z dawnego `deploy-restart.sh` już weszły 2026-11-21 11:05.
+- **LT01313**: kod na a14bf74ab (git pull zrobiony, pluginy plansza i moje-sesje przeładowane i
+  zainstalowane bez restartu). Restart + `npm ci` + `build:server` + supervisor-rola + zadanie
+  Harmonogramu dla `supervisor (01)`: `SETUP-WINDOWS.md`, krok 4a.
+- Połączenie daemonów: VPS→LT i LT→VPS działa (LT z hasłem w `relay://…&password=`).
+- Plansza: kolejność projektów zapisana per host; na VPS aquila-fk, welthix, sort „Moja kolejność”.
 
 ## Skill supervisora
 `.claude/skills/paseo-supervisor/SKILL.md` (jedyne źródło roli) + plugin `plugins/supervisor-rola`:
