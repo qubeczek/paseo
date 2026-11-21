@@ -361,7 +361,7 @@ function UnreadProject({ name, items, props, styles }: { name: string; items: re
   );
 }
 
-function NeedsYou({ props, styles, data }: { props: Props; styles: Styles; data: BoardData }) {
+function NeedsYou({ props, styles, data, projectRank }: { props: Props; styles: Styles; data: BoardData; projectRank: (name: string) => number }) {
   const byWait = (a: PluginAgentSnapshot, b: PluginAgentSnapshot) =>
     stateOf(a, data).priority - stateOf(b, data).priority || Date.parse(a.updatedAt) - Date.parse(b.updatedAt);
   const waiting = useAgents({ where: (a) => visible(a) && stateOf(a, data).needsYou, orderBy: byWait });
@@ -378,6 +378,7 @@ function NeedsYou({ props, styles, data }: { props: Props; styles: Styles; data:
     orderBy: ["updatedAt", "desc"],
     groupBy: (a) => projectOf.get(a.workspace.key) ?? "Inne",
   });
+  const columns = [...byProject].sort((a, b) => projectRank(a.key) - projectRank(b.key));
   const unreadCount = byProject.reduce((sum, group) => sum + group.items.length, 0);
   return (
     <View style={{ gap: 12 }}>
@@ -391,7 +392,7 @@ function NeedsYou({ props, styles, data }: { props: Props; styles: Styles; data:
         {waiting.map((reference) => (
           <NeedsYouCard key={reference.key} reference={reference} props={props} styles={styles} data={data} />
         ))}
-        {byProject.map((group) => (
+        {columns.map((group) => (
           <UnreadProject key={group.key} name={group.key} items={group.items} props={props} styles={styles} />
         ))}
         {waiting.length === 0 && unreadCount === 0 ? (
@@ -573,7 +574,10 @@ function ProjectTable({ group, props, styles, data, counts, backlog, root, colla
           {summary(counts)} {open ? "▾" : "▸"}
         </Text>
       </Pressable>
-      {open && !styles.compact ? (
+      {open ? (
+      <View style={{ flexDirection: styles.compact ? "column" : "row", gap: styles.compact ? 16 : 24, alignItems: "flex-start" }}>
+      <View style={{ flex: styles.compact ? undefined : 1.55, width: styles.compact ? "100%" : undefined, minWidth: 0, gap: 4 }}>
+      {!styles.compact ? (
         <View style={[styles.row, { gap: 12, paddingBottom: 4 }]}>
           <Text style={[styles.label, { width: 130 }]}>Sesja</Text>
           <Text style={[styles.label, { width: 190 }]}>Stan</Text>
@@ -581,7 +585,21 @@ function ProjectTable({ group, props, styles, data, counts, backlog, root, colla
           <Text style={[styles.label, { width: 80, textAlign: "right" }]}>Od</Text>
         </View>
       ) : null}
-      {open ? agents.map((reference) => <TableRow key={reference.key} reference={reference} props={props} styles={styles} data={data} work={work} />) : null}
+      {agents.map((reference) => <TableRow key={reference.key} reference={reference} props={props} styles={styles} data={data} work={work} />)}
+      </View>
+      {backlog ? (
+        <View
+          style={
+            styles.compact
+              ? { width: "100%", borderTopWidth: 1, borderTopColor: styles.c.border, paddingTop: 12 }
+              : { flex: 1, minWidth: 320, borderLeftWidth: 1, borderLeftColor: styles.c.border, paddingLeft: 20 }
+          }
+        >
+          <BacklogTile name={group.name} backlog={backlog} styles={styles} props={props} collapsed={false} />
+        </View>
+      ) : null}
+      </View>
+      ) : null}
     </View>
   );
 }
@@ -621,6 +639,7 @@ function ProjectTile({ group, props, styles, data, counts }: { group: ProjectGro
 
 // ---------------------------------------------------------------- backlog
 
+/** Backlog of one project, shown inside that project's panel (no card of its own). */
 function BacklogTile({ name, backlog, styles, props, collapsed }: { name: string; backlog: Backlog; styles: Styles; props: Props; collapsed: boolean }) {
   const [all, setAll] = useState(false);
   const [open, setOpen] = useState(!collapsed);
@@ -636,16 +655,14 @@ function BacklogTile({ name, backlog, styles, props, collapsed }: { name: string
     </View>
   );
   return (
-    <View style={[styles.card, { gap: open ? 12 : 4 }]}>
+    <View style={{ gap: open ? 12 : 4 }}>
       <Pressable
         accessibilityRole="button"
         accessibilityLabel={`${open ? "Zwiń" : "Rozwiń"} backlog ${name}`}
         onPress={() => setOpen((v) => !v)}
         style={[styles.row, { justifyContent: "space-between", flexWrap: "wrap", minHeight: 36 }]}
       >
-        <Text accessibilityRole="header" style={[styles.strong, { fontSize: 16 }]}>
-          Backlog · {name}
-        </Text>
+        <Text style={styles.label}>Backlog</Text>
         <Text style={styles.muted}>
           {backlog.inProgress.length} w toku · {counts["backlog"] ?? 0} backlog {open ? "▾" : "▸"}
         </Text>
@@ -824,11 +841,9 @@ export function Board(props: Props) {
   const isDev = (g: ProjectGroup) => layout.kinds[g.name] === "dev" || (!layout.kinds[g.name] && (!!backlogOf(g.name) || (counts[g.name]?.total ?? 0) >= 3));
   const dev = active.filter(isDev);
   const side = active.filter((g) => !isDev(g));
-  const backlogs = shown.map((g) => ({ name: g.name, backlog: backlogOf(g.name) })).filter((e): e is { name: string; backlog: Backlog } => !!e.backlog);
-  const wide = !styles.compact;
 
   const projects = (
-    <View style={{ gap: 24, flex: wide ? 1.55 : undefined, minWidth: 0 }}>
+    <View style={{ gap: 24 }}>
       {dev.length > 0 ? (
         <Section title={Object.values(layout.kinds).includes("dev") ? "Projekty deweloperskie" : "Projekty"} styles={styles}>
           {dev.map((group) => (
@@ -871,17 +886,13 @@ export function Board(props: Props) {
     <ScrollView style={styles.screen} contentContainerStyle={styles.content}>
       {reporters}
       <Header props={props} styles={styles} data={data} onEdit={() => setEditing(true)} />
-      <NeedsYou props={props} styles={styles} data={data} />
-      <View style={{ flexDirection: wide ? "row" : "column", gap: 24, alignItems: "flex-start" }}>
-        {projects}
-        {backlogs.length > 0 ? (
-          <View style={{ gap: 24, flex: wide ? 1 : undefined, minWidth: wide ? 360 : undefined, width: wide ? undefined : "100%" }}>
-            {backlogs.map(({ name, backlog }) => (
-              <BacklogTile key={name} name={name} backlog={backlog} styles={styles} props={props} collapsed={layout.collapsed.includes(name)} />
-            ))}
-          </View>
-        ) : null}
-      </View>
+      <NeedsYou props={props} styles={styles} data={data} projectRank={(name) => {
+        // Development projects first, then the rest; within each, the board's order.
+        const group = sorted.find((g) => g.name === name);
+        const position = group ? sorted.indexOf(group) : sorted.length;
+        return (group && isDev(group) ? 0 : 100000) + position;
+      }} />
+      {projects}
     </ScrollView>
   );
 }
