@@ -2,7 +2,7 @@ import { promises as fs } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import type { PluginServerContext } from "@getpaseo/plugin/server";
-import { backlogFor } from "./server/backlog";
+import { backlogFor, waitingFor } from "./server/backlog";
 import { boardStatus, layoutSettings, type Backlog, type Paused } from "./shared/contracts";
 
 const paseoHome = process.env.PASEO_HOME || path.join(os.homedir(), ".paseo");
@@ -31,7 +31,8 @@ export default function contribute(server: PluginServerContext) {
     const backlogs = (await Promise.all(unique.map(backlogFor))).filter(
       (backlog): backlog is Backlog => backlog !== null,
     );
-    return { backlogs, paused: await readPaused() };
+    const waiting = (await Promise.all(unique.map(waitingFor))).flat();
+    return { backlogs, paused: await readPaused(), waiting };
   });
   return () => {};
 }

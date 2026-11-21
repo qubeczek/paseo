@@ -1,4 +1,5 @@
-import { useCallback, useMemo } from "react";
+import { useQuery } from "@tanstack/react-query";
+import { createContext, useCallback, useContext, useMemo } from "react";
 import { Linking, Pressable, ScrollView, Text, View } from "react-native";
 import type { PluginAgentSnapshot } from "@getpaseo/plugin";
 import {
@@ -6,19 +7,28 @@ import {
   useAgents,
   useProject,
   useProjects,
+  useRpc,
   useWorkspace,
+  useWorkspaces,
   type AgentRef,
   type ProjectRef,
   type PluginSidebarViewProps,
 } from "@getpaseo/plugin/client";
 
+import { ownerQuestions } from "../shared/contracts";
+
 type Bucket = "waiting" | "working" | "recent";
+
+/** Titles of sessions parked on a question to the owner (harness probe); Paseo itself cannot see these. */
+const Questions = createContext<ReadonlySet<string>>(new Set());
+const asked = (agent: PluginAgentSnapshot, questions: ReadonlySet<string>) =>
+  !!agent.title && questions.has(agent.title);
 
 const RECENT_LIMIT = 15;
 
 /** Where an agent belongs in the list: what it needs from the user right now. */
-function bucketOf(agent: PluginAgentSnapshot): Bucket {
-  if (agent.attentionReason === "permission" || agent.status === "error") return "waiting";
+function bucketOf(agent: PluginAgentSnapshot, questions: ReadonlySet<string>): Bucket {
+  if (agent.attentionReason === "permission" || agent.status === "error" || asked(agent, questions)) return "waiting";
   if (
     agent.status === "running" ||
     agent.status === "initializing" ||
@@ -30,8 +40,9 @@ function bucketOf(agent: PluginAgentSnapshot): Bucket {
   return "recent";
 }
 
-function waitingLabel(agent: PluginAgentSnapshot): string {
+function waitingLabel(agent: PluginAgentSnapshot, questions: ReadonlySet<string>): string {
   if (agent.attentionReason === "permission") return "prosi o zgodę";
+  if (asked(agent, questions)) return "czeka na Twoją decyzję";
   return "błąd";
 }
 
@@ -111,8 +122,9 @@ function AgentRow({ reference, view }: { reference: AgentRef; view: PluginSideba
   const agent = useAgent(reference);
   const open = useCallback(() => view.navigation.openAgent(reference), [view.navigation, reference]);
   const colors = view.theme.colors;
+  const questions = useContext(Questions);
   if (!agent) return null;
-  const bucket = bucketOf(agent);
+  const bucket = bucketOf(agent, questions);
   const dot =
     bucket === "waiting"
       ? agent.status === "error"
@@ -123,7 +135,7 @@ function AgentRow({ reference, view }: { reference: AgentRef; view: PluginSideba
         : colors.foregroundMuted;
   const state =
     bucket === "waiting"
-      ? waitingLabel(agent)
+      ? waitingLabel(agent, questions)
       : bucket === "working"
         ? agent.status === "running" || agent.status === "initializing"
           ? "pracuje"
@@ -174,9 +186,10 @@ function Section({
   empty?: string;
   view: PluginSidebarViewProps;
 }) {
+  const questions = useContext(Questions);
   // Background agents are helpers the user never opens; subagents live under their parent.
   const agents = useAgents({
-    where: (agent) => !agent.background && agent.parentAgentId === null && bucketOf(agent) === bucket,
+    where: (agent) => !agent.background && agent.parentAgentId === null && bucketOf(agent, questions) === bucket,
     orderBy: ["lastActivityAt", "desc"],
   });
   const shown = limit === undefined ? agents : agents.slice(0, limit);
@@ -227,13 +240,30 @@ function Projects({ view }: { view: PluginSidebarViewProps }) {
   );
 }
 
+function useOwnerQuestions(): ReadonlySet<string> {
+  const ask = useRpc(ownerQuestions);
+  const workspaces = useWorkspaces({ where: (w) => !w.background, groupBy: (w) => w.projectRootPath });
+  const roots = workspaces.map((group) => String(group.key)).sort();
+  const query = useQuery({
+    queryKey: ["owner.questions", roots.join("\n")],
+    queryFn: () => ask({ roots }),
+    refetchInterval: 60_000,
+    placeholderData: (previous) => previous,
+  });
+  const names = query.data?.names;
+  return useMemo(() => new Set(names ?? []), [names?.join("\n")]);
+}
+
 export function MySessions(view: PluginSidebarViewProps) {
+  const questions = useOwnerQuestions();
   return (
+    <Questions.Provider value={questions}>
     <ScrollView contentContainerStyle={{ paddingBottom: 24 }}>
       <Section title="CZEKA NA CIEBIE" bucket="waiting" empty="Nic nie czeka." view={view} />
       <Section title="PRACUJE" bucket="working" view={view} />
       <Section title="OSTATNIE" bucket="recent" limit={RECENT_LIMIT} view={view} />
       <Projects view={view} />
     </ScrollView>
+    </Questions.Provider>
   );
 }

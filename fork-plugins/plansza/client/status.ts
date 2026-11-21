@@ -1,7 +1,7 @@
 // One status function for every place on the board: priority, label and color of a session.
 import type { PluginAgentSnapshot, PluginTheme } from "@getpaseo/plugin";
 
-export type StateKind = "permission" | "error" | "paused" | "working" | "background" | "finished" | "idle";
+export type StateKind = "permission" | "question" | "error" | "paused" | "working" | "background" | "finished" | "idle";
 
 export interface SessionState {
   kind: StateKind;
@@ -14,15 +14,24 @@ export interface SessionState {
 
 const PRIORITY: Record<StateKind, number> = {
   permission: 0,
-  error: 1,
-  finished: 2,
-  working: 3,
-  background: 4,
-  paused: 5,
-  idle: 6,
+  question: 1,
+  error: 2,
+  finished: 3,
+  working: 4,
+  background: 5,
+  paused: 6,
+  idle: 7,
 };
 
-export function sessionState(agent: PluginAgentSnapshot, pausedUntil?: number | null | undefined): SessionState {
+/**
+ * `question`: the harness marked the story session as parked on a question to the owner (story_probe WAITING_*),
+ * which Paseo itself cannot see — the session just looks idle or busy.
+ */
+export function sessionState(
+  agent: PluginAgentSnapshot,
+  pausedUntil?: number | null | undefined,
+  question?: { verdict: string } | undefined,
+): SessionState {
   const make = (kind: StateKind, label: string, needsYou = false): SessionState => ({
     kind,
     priority: PRIORITY[kind],
@@ -30,6 +39,7 @@ export function sessionState(agent: PluginAgentSnapshot, pausedUntil?: number | 
     needsYou,
   });
   if (agent.attentionReason === "permission") return make("permission", "czeka na zgodę", true);
+  if (question) return make("question", "czeka na Twoją decyzję", true);
   // A paused session errors on the usage limit; wznawianie brings it back by itself — no alarm.
   if (pausedUntil !== undefined) return make("paused", pausedUntil ? `limit · wznowi ${clock(pausedUntil)}` : "limit · wznowi sama");
   if (agent.status === "error") return make("error", "błąd", true);
@@ -44,6 +54,7 @@ export function stateColor(kind: StateKind, theme: PluginTheme): string {
   const c = theme.colors;
   switch (kind) {
     case "permission":
+    case "question":
       return c.statusWarning;
     case "error":
       return c.statusDanger;

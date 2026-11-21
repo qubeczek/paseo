@@ -3,7 +3,7 @@ import { execFile } from "node:child_process";
 import { promises as fs } from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import type { Backlog } from "../shared/contracts";
+import type { Backlog, Waiting } from "../shared/contracts";
 
 const ARTIFACTS = "docs/implementation-artifacts";
 const BMAD_CONFIG = "_bmad/bmm/config.yaml";
@@ -11,6 +11,7 @@ const BMAD_CONFIG = "_bmad/bmm/config.yaml";
 const PM_QUEUES = [".claude/scripts/harness/pm_queue.py", ".claude/scripts/pm/pm-queue.py"];
 const AQUILA_PM_STATE = ".claude/state/pm";
 const CONFIG = ".claude/scripts/harness/config.py";
+const STORY_PROBE = ".claude/scripts/harness/story_probe.py";
 const CACHE_MS = 60_000;
 
 const cache = new Map<string, { at: number; value: Backlog | null }>();
@@ -367,6 +368,41 @@ async function readBacklog(root: string): Promise<Backlog | null> {
     error: errors.length > 0 ? errors.join("; ") : null,
     readAt: new Date().toISOString(),
   };
+}
+
+interface ProbeRecord {
+  story?: string;
+  verdict?: string;
+  session?: { name?: string; sessionId?: string } | null;
+  lock?: { awaiting_since?: string | null } | null;
+  last_activity?: string | null;
+}
+
+const waitingCache = new Map<string, { at: number; value: Waiting[] }>();
+
+/** Story sessions parked on an owner question, from the harness probe (same verdicts bmadx-pm reports). */
+export async function waitingFor(root: string): Promise<Waiting[]> {
+  const hit = waitingCache.get(root);
+  if (hit && Date.now() - hit.at < CACHE_MS) return hit.value;
+  let value: Waiting[] = [];
+  if (await exists(path.join(root, STORY_PROBE))) {
+    try {
+      const records = JSON.parse(await python([STORY_PROBE, "--all"], root)) as ProbeRecord[];
+      value = records
+        .filter((r) => typeof r.verdict === "string" && r.verdict.startsWith("WAITING") && r.verdict !== "WAITING_MERGE_WINDOW")
+        .map((r) => ({
+          name: r.session?.name ?? null,
+          sessionId: r.session?.sessionId ?? null,
+          story: r.story ?? "",
+          verdict: r.verdict as string,
+          since: r.lock?.awaiting_since ?? r.last_activity ?? null,
+        }));
+    } catch {
+      value = [];
+    }
+  }
+  waitingCache.set(root, { at: Date.now(), value });
+  return value;
 }
 
 export async function backlogFor(root: string): Promise<Backlog | null> {

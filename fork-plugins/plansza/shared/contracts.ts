@@ -44,12 +44,25 @@ export const PausedSchema = z.object({
 export type Paused = z.infer<typeof PausedSchema>;
 
 /** BMAD backlogs for project roots on the plugin's host, plus sessions paused by the wznawianie plugin. */
+/** A story session parked on a question to the owner (harness `story_probe.py`: WAITING_*). */
+export const WaitingSchema = z.object({
+  /** Session name (`--name`), equal to the Paseo agent title for sessions the harness starts. */
+  name: z.string().nullable(),
+  sessionId: z.string().nullable(),
+  story: z.string(),
+  verdict: z.string(),
+  since: z.string().nullable(),
+});
+export type Waiting = z.infer<typeof WaitingSchema>;
+
 export const boardStatus = defineRpc({
   name: "board.status",
   input: z.object({ roots: z.array(z.string()).max(50) }),
   output: z.object({
     backlogs: z.array(BacklogSchema),
     paused: z.array(PausedSchema),
+    /** Missing from hosts with an older plugin. */
+    waiting: z.array(WaitingSchema).default([]),
   }),
 });
 

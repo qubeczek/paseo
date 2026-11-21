@@ -14,7 +14,7 @@ import {
 } from "@getpaseo/plugin/client";
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { Linking, Pressable, ScrollView, Text, View } from "react-native";
-import { boardStatus, layoutSettings, type Backlog, type Layout } from "../shared/contracts";
+import { boardStatus, layoutSettings, type Backlog, type Layout, type Waiting } from "../shared/contracts";
 import { ALL_HOSTS, callHostRpc } from "./hosts";
 import { LayoutEditor } from "./layout-editor";
 import { projectKey, sessionState, shortPath, since, stateColor, storyOf, type SessionState, type StateKind } from "./status";
@@ -62,6 +62,8 @@ interface BoardData {
   paused: Map<string, number | null>;
   /** `host|root` → backlog. */
   backlogs: Map<string, Backlog>;
+  /** `host|session name` → story parked on an owner question. */
+  waiting: Map<string, Waiting>;
   /** Hosts that did not answer (offline, plugin missing). */
   failed: string[];
 }
@@ -107,11 +109,13 @@ function useBoardData(props: Props, request: Record<string, string[]>): BoardDat
     }
     const paused = new Map<string, number | null>();
     const backlogs = new Map<string, Backlog>();
+    const waiting = new Map<string, Waiting>();
     for (const [hostId, result] of lastGood.current) {
+      for (const entry of result.waiting ?? []) if (entry.name) waiting.set(at(hostId, entry.name), entry);
       for (const entry of result.paused) paused.set(at(hostId, entry.agentId), entry.resetAt);
       for (const backlog of result.backlogs) backlogs.set(at(hostId, backlog.root), backlog);
     }
-    return { paused, backlogs, failed };
+    return { paused, backlogs, waiting, failed };
   }, [query.data]);
 }
 
@@ -123,7 +127,13 @@ function pausedFor(agent: PluginAgentSnapshot, data: BoardData): number | null |
   return undefined;
 }
 
-const stateOf = (agent: PluginAgentSnapshot, data: BoardData) => sessionState(agent, pausedFor(agent, data));
+function questionFor(agent: PluginAgentSnapshot, data: BoardData): Waiting | undefined {
+  if (!agent.title) return undefined;
+  return data.waiting.get(at(agent.hostId, agent.title)) ?? data.waiting.get(at(SELECTED, agent.title));
+}
+
+const stateOf = (agent: PluginAgentSnapshot, data: BoardData) =>
+  sessionState(agent, pausedFor(agent, data), questionFor(agent, data));
 
 // ---------------------------------------------------------------- styles
 
@@ -289,7 +299,7 @@ function NeedsYouCard({ reference, props, styles, data }: { reference: AgentRef;
   return (
     <View style={[styles.card, { backgroundColor: tint(color, 0.1), borderColor: tint(color, 0.5), flexGrow: 1, flexBasis: 300, minWidth: 260 }]}>
       <View style={[styles.row, { justifyContent: "space-between" }]}>
-        <Text style={[styles.label, { color }]}>{state.kind === "permission" ? "Prośba o zgodę" : "Błąd"}</Text>
+        <Text style={[styles.label, { color }]}>{state.kind === "permission" ? "Prośba o zgodę" : state.kind === "question" ? "Pytanie do Ciebie" : "Błąd"}</Text>
         <Text style={{ color, fontSize: 12, fontWeight: "600" }}>czeka {since(agent.updatedAt)}</Text>
       </View>
       <Text style={styles.text}>
@@ -428,6 +438,7 @@ function ProjectCounter({ group, data, onCounts }: { group: ProjectGroup; data: 
 
 const SUMMARY: [StateKind, string][] = [
   ["permission", "zgoda"],
+  ["question", "pytanie"],
   ["error", "błąd"],
   ["finished", "nieprzeczytane"],
   ["working", "pracuje"],
